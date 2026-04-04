@@ -1,5 +1,7 @@
 package rs.fon.hakaton.audionav.domain
 
+import kotlin.math.roundToInt
+
 sealed interface RssiStabilizationResult {
     data class Tracking(
         val progress: Int,
@@ -10,6 +12,7 @@ sealed interface RssiStabilizationResult {
     data class Stable(
         val payload: DecodedBeaconPayload,
         val rssi: Int,
+        val smoothedRssi: Int,
         val detectedAt: Long,
     ) : RssiStabilizationResult
 
@@ -53,6 +56,7 @@ class RssiStabilizer(
                 consecutiveReads = 1,
                 lastSeenAt = detectedAt,
                 lastRssi = rssi,
+                recentRssiReadings = listOf(rssi),
                 hasTriggeredSinceReset = false,
             )
             return RssiStabilizationResult.Rejected(
@@ -62,9 +66,12 @@ class RssiStabilizer(
         }
 
         if (previousState?.hasTriggeredSinceReset == true) {
+            val refreshedReadings = (previousState.recentRssiReadings + rssi)
+                .takeLast(requiredConsecutiveReads)
             trackingStates[beaconId] = previousState.copy(
                 lastSeenAt = detectedAt,
                 lastRssi = rssi,
+                recentRssiReadings = refreshedReadings,
             )
             return RssiStabilizationResult.Tracking(
                 progress = requiredConsecutiveReads,
@@ -74,10 +81,13 @@ class RssiStabilizer(
         }
 
         val nextReads = (previousState?.consecutiveReads ?: 0) + 1
+        val nextReadings = ((previousState?.recentRssiReadings ?: emptyList()) + rssi)
+            .takeLast(requiredConsecutiveReads)
         val nextState = BeaconTrackingState(
             consecutiveReads = nextReads.coerceAtMost(requiredConsecutiveReads),
             lastSeenAt = detectedAt,
             lastRssi = rssi,
+            recentRssiReadings = nextReadings,
             hasTriggeredSinceReset = nextReads >= requiredConsecutiveReads,
         )
         trackingStates[beaconId] = nextState
@@ -86,6 +96,7 @@ class RssiStabilizer(
             RssiStabilizationResult.Stable(
                 payload = payload,
                 rssi = rssi,
+                smoothedRssi = nextReadings.average().roundToInt(),
                 detectedAt = detectedAt,
             )
         } else {
@@ -111,6 +122,7 @@ class RssiStabilizer(
         val consecutiveReads: Int,
         val lastSeenAt: Long,
         val lastRssi: Int,
+        val recentRssiReadings: List<Int>,
         val hasTriggeredSinceReset: Boolean,
     )
 }

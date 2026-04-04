@@ -16,6 +16,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import rs.fon.hakaton.audionav.domain.PermissionStatus
@@ -48,13 +50,17 @@ fun ModeSelectionScreen(
             style = MaterialTheme.typography.bodyLarge,
         )
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Kartica statusa uredjaja" },
+        ) {
             Column(
                 modifier = Modifier.padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "Status uređaja",
+                    text = "Status uredjaja",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -71,9 +77,10 @@ fun ModeSelectionScreen(
                     onClick = onRequestPermissionsClick,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .semantics { contentDescription = "Zatrazi bluetooth dozvole" }
                         .sizeIn(minHeight = 56.dp),
                 ) {
-                    Text("Zatraži dozvole")
+                    Text("Zatrazi dozvole")
                 }
             }
 
@@ -82,9 +89,10 @@ fun ModeSelectionScreen(
                     onClick = onOpenSettingsClick,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .semantics { contentDescription = "Otvori podesavanja aplikacije" }
                         .sizeIn(minHeight = 56.dp),
                 ) {
-                    Text("Otvori podešavanja")
+                    Text("Otvori podesavanja")
                 }
             }
 
@@ -93,9 +101,10 @@ fun ModeSelectionScreen(
                     onClick = onRefreshStatusClick,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .semantics { contentDescription = "Osvezi status uredjaja" }
                         .sizeIn(minHeight = 56.dp),
                 ) {
-                    Text("Osveži status")
+                    Text("Osvezi status")
                 }
             }
         }
@@ -108,17 +117,19 @@ fun ModeSelectionScreen(
                 onClick = onBeaconModeClick,
                 modifier = Modifier
                     .weight(1f)
+                    .semantics { contentDescription = "Otvori beacon mod" }
                     .sizeIn(minHeight = 64.dp),
             ) {
-                Text("Beacon Mode")
+                Text("Beacon mod")
             }
             Button(
                 onClick = onReceiverModeClick,
                 modifier = Modifier
                     .weight(1f)
+                    .semantics { contentDescription = "Otvori receiver mod" }
                     .sizeIn(minHeight = 64.dp),
             ) {
-                Text("Receiver Mode")
+                Text("Receiver mod")
             }
         }
     }

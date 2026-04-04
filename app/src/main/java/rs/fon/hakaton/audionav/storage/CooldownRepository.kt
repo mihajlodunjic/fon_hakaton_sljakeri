@@ -51,11 +51,18 @@ class CooldownRepository(
     }
 
     suspend fun recordStableEvent(event: DetectedBeaconEvent) {
+        recordStableEvent(event, announcedAt = event.detectedAt)
+    }
+
+    suspend fun recordStableEvent(
+        event: DetectedBeaconEvent,
+        announcedAt: Long,
+    ) {
         if (event.wasAnnounced) {
             cooldownEntries[key(event.beaconId, event.messageCode)] = CooldownEntry(
                 beaconId = event.beaconId,
                 messageCode = event.messageCode,
-                lastTriggeredAt = event.detectedAt,
+                lastTriggeredAt = announcedAt,
             )
         }
 

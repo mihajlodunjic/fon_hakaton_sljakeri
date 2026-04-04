@@ -30,6 +30,10 @@ import rs.fon.hakaton.audionav.storage.BeaconConfigStorage
 import rs.fon.hakaton.audionav.storage.CooldownRepository
 import rs.fon.hakaton.audionav.storage.ReceiverRuntimeSnapshot
 import rs.fon.hakaton.audionav.storage.ReceiverRuntimeStorage
+import rs.fon.hakaton.audionav.tts.TtsAnnouncer
+import rs.fon.hakaton.audionav.tts.TtsPlaybackEvent
+import rs.fon.hakaton.audionav.tts.TtsSpeakResult
+import rs.fon.hakaton.audionav.tts.TtsStatus
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppViewModelTest {
@@ -203,7 +207,8 @@ class AppViewModelTest {
     @Test
     fun `receiver needs three valid reads before stable event is recorded`() = runTest {
         val scanner = FakeBeaconScannerController()
-        val viewModel = createViewModel(scanner = scanner)
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
         viewModel.onSystemStatusChanged(
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
@@ -229,12 +234,16 @@ class AppViewModelTest {
         assertEquals(true, state.lastEligibleForAnnouncement)
         assertEquals("Najava dozvoljena.", state.lastGateDecisionText)
         assertEquals("Pesacki prelaz ispred vas.", state.lastDecodedText)
+        assertEquals("Pesacki prelaz ispred vas.", state.lastSpokenText)
+        assertEquals(300L, state.lastSpokenAt)
+        assertEquals(1, ttsAnnouncer.announceCalls)
     }
 
     @Test
     fun `receiver valid payload with unknown message code shows fallback text after stabilization`() = runTest {
         val scanner = FakeBeaconScannerController()
-        val viewModel = createViewModel(scanner = scanner)
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
         viewModel.onSystemStatusChanged(
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
@@ -264,12 +273,18 @@ class AppViewModelTest {
             viewModel.uiState.value.receiverState.lastDecodedText,
         )
         assertEquals(1, viewModel.uiState.value.receiverState.recentEvents.size)
+        assertEquals(0, ttsAnnouncer.announceCalls)
+        assertEquals(
+            "Nema lokalne TTS poruke za ovaj beacon.",
+            viewModel.uiState.value.receiverState.lastTtsError,
+        )
     }
 
     @Test
     fun `stable event inside cooldown is recorded but blocked`() = runTest {
         val scanner = FakeBeaconScannerController()
-        val viewModel = createViewModel(scanner = scanner)
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
         viewModel.onSystemStatusChanged(
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
@@ -295,6 +310,55 @@ class AppViewModelTest {
         assertEquals(false, state.recentEvents.first().wasAnnounced)
         assertEquals(false, state.lastEligibleForAnnouncement)
         assertTrue(state.lastGateDecisionText?.contains("cooldown-u") == true)
+        assertEquals(1, ttsAnnouncer.announceCalls)
+    }
+
+    @Test
+    fun `tts skipped not ready updates receiver state without breaking scan`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer(
+            announceResult = TtsSpeakResult.SkippedNotReady("TTS jos nije spreman."),
+        )
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(beaconDetected(rssi = -60, detectedAt = 10L + index))
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(true, state.isScanning)
+        assertEquals("TTS jos nije spreman.", state.lastTtsError)
+    }
+
+    @Test
+    fun `tts failure updates receiver state without breaking scan`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer(
+            announceResult = TtsSpeakResult.Failed("TTS nije uspeo da zakaze glasovnu najavu."),
+        )
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(beaconDetected(rssi = -60, detectedAt = 20L + index))
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(true, state.isScanning)
+        assertEquals("TTS nije uspeo da zakaze glasovnu najavu.", state.lastTtsError)
     }
 
     @Test
@@ -353,6 +417,175 @@ class AppViewModelTest {
 
         assertEquals(2, scanner.startCalls)
         assertEquals(true, viewModel.uiState.value.receiverState.isScanning)
+    }
+
+    @Test
+    fun `higher priority beacon is queued and spoken after current playback finishes`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val clock = FakeClock()
+        val viewModel = createViewModel(
+            scanner = scanner,
+            ttsAnnouncer = ttsAnnouncer,
+            clock = clock,
+        )
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    beaconId = "beacon-a",
+                    priority = Priority.MEDIUM,
+                    rssi = -60 + index,
+                    detectedAt = 100L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    beaconId = "beacon-b",
+                    pointType = PointType.STAIRS,
+                    messageCode = 2,
+                    priority = Priority.HIGH,
+                    rssi = -67 + index,
+                    detectedAt = 200L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        var state = viewModel.uiState.value.receiverState
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals("beacon-b", state.pendingAnnouncementBeaconId)
+        assertEquals("Kandidat ceka zavrsetak trenutne poruke.", state.lastArbitrationDecisionText)
+
+        clock.nowMs = 3_000L
+        ttsAnnouncer.emitPlaybackEvent(
+            TtsPlaybackEvent.Done(ttsAnnouncer.announcedUtteranceIds.first()),
+        )
+        advanceUntilIdle()
+
+        state = viewModel.uiState.value.receiverState
+        assertEquals(2, ttsAnnouncer.announceCalls)
+        assertEquals("Paznja, stepenice.", ttsAnnouncer.announcedTexts.last())
+        assertEquals(null, state.pendingAnnouncementBeaconId)
+        assertEquals("Cekajuci kandidat je dosao na red za glasovnu najavu.", state.lastArbitrationDecisionText)
+    }
+
+    @Test
+    fun `same priority weaker beacon does not replace stronger pending candidate`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    beaconId = "beacon-a",
+                    rssi = -60 + index,
+                    detectedAt = 100L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    beaconId = "pending-strong",
+                    rssi = -62 + index,
+                    detectedAt = 200L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    beaconId = "pending-weak",
+                    rssi = -66 + index,
+                    detectedAt = 300L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals("pending-strong", state.pendingAnnouncementBeaconId)
+        assertEquals(
+            "Kandidat je odbacen jer postoji vazniji ili blizi beacon.",
+            state.lastArbitrationDecisionText,
+        )
+    }
+
+    @Test
+    fun `pending candidate older than four seconds is dropped before speech`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val clock = FakeClock()
+        val viewModel = createViewModel(
+            scanner = scanner,
+            ttsAnnouncer = ttsAnnouncer,
+            clock = clock,
+        )
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionStatus.GRANTED.let { PermissionUiState(status = it) },
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    beaconId = "beacon-a",
+                    rssi = -60 + index,
+                    detectedAt = 100L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    beaconId = "beacon-pending",
+                    pointType = PointType.STAIRS,
+                    messageCode = 2,
+                    priority = Priority.HIGH,
+                    rssi = -61 + index,
+                    detectedAt = 200L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        clock.nowMs = 5_500L
+        ttsAnnouncer.emitPlaybackEvent(
+            TtsPlaybackEvent.Done(ttsAnnouncer.announcedUtteranceIds.first()),
+        )
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals(null, state.pendingAnnouncementBeaconId)
+        assertEquals("Kandidat je zastareo pre glasovne najave.", state.lastArbitrationDecisionText)
+        assertEquals(false, state.recentEvents.first().wasAnnounced)
     }
 
     @Test
@@ -418,6 +651,8 @@ class AppViewModelTest {
         advertiser: FakeBeaconAdvertiserController = FakeBeaconAdvertiserController(),
         scanner: FakeBeaconScannerController = FakeBeaconScannerController(),
         runtimeStorage: FakeReceiverRuntimeStorage = FakeReceiverRuntimeStorage(),
+        ttsAnnouncer: FakeTtsAnnouncer = FakeTtsAnnouncer(),
+        clock: FakeClock = FakeClock(),
     ): AppViewModel {
         return AppViewModel(
             beaconConfigStorage = storage,
@@ -425,6 +660,8 @@ class AppViewModelTest {
             beaconScannerController = scanner,
             cooldownRepository = CooldownRepository(runtimeStorage),
             rssiStabilizer = RssiStabilizer(),
+            ttsAnnouncer = ttsAnnouncer,
+            timeProvider = clock::now,
         )
     }
 
@@ -433,13 +670,15 @@ class AppViewModelTest {
         detectedAt: Long,
         messageCode: Short = 1,
         pointType: PointType = PointType.CROSSWALK,
+        beaconId: String = "123e4567-e89b-12d3-a456-426614174000",
+        priority: Priority = Priority.MEDIUM,
     ): BeaconScanEvent.BeaconDetected {
         return BeaconScanEvent.BeaconDetected(
             payload = DecodedBeaconPayload(
                 protocolVersion = 1,
-                beaconId = "123e4567-e89b-12d3-a456-426614174000",
+                beaconId = beaconId,
                 pointType = pointType,
-                priority = Priority.MEDIUM,
+                priority = priority,
                 messageCode = messageCode,
             ),
             rssi = rssi,
@@ -460,6 +699,46 @@ private class FakeBeaconConfigStorage(
 
     override suspend fun clearActiveFlag() {
         storedConfig = storedConfig?.copy(isActive = false)
+    }
+}
+
+private class FakeTtsAnnouncer(
+    private val initialStatus: TtsStatus = TtsStatus.READY_SR,
+    private val announceResult: TtsSpeakResult = TtsSpeakResult.Queued,
+) : TtsAnnouncer {
+
+    var announceCalls: Int = 0
+    var shutdownCalls: Int = 0
+    private var statusCallback: ((TtsStatus) -> Unit)? = null
+    private var playbackCallback: ((TtsPlaybackEvent) -> Unit)? = null
+    val announcedTexts = mutableListOf<String>()
+    val announcedUtteranceIds = mutableListOf<String>()
+
+    override fun initialize(
+        onStatusChanged: (TtsStatus) -> Unit,
+        onPlaybackEvent: (TtsPlaybackEvent) -> Unit,
+    ) {
+        statusCallback = onStatusChanged
+        playbackCallback = onPlaybackEvent
+        onStatusChanged(initialStatus)
+    }
+
+    override fun announce(
+        text: String,
+        utteranceId: String,
+    ): TtsSpeakResult {
+        announceCalls += 1
+        announcedTexts += text
+        announcedUtteranceIds += utteranceId
+        return announceResult
+    }
+
+    override fun shutdown() {
+        shutdownCalls += 1
+    }
+
+    fun emitPlaybackEvent(event: TtsPlaybackEvent) {
+        playbackCallback?.invoke(event)
     }
 }
 
@@ -521,4 +800,10 @@ private class FakeBeaconScannerController(
     fun emit(event: BeaconScanEvent) {
         callback?.invoke(event)
     }
+}
+
+private class FakeClock(
+    var nowMs: Long = 0L,
+) {
+    fun now(): Long = nowMs
 }

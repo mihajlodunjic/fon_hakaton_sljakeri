@@ -9,6 +9,7 @@ import rs.fon.hakaton.audionav.domain.RssiStabilizer
 import rs.fon.hakaton.audionav.storage.CooldownRepository
 import rs.fon.hakaton.audionav.storage.DataStoreBeaconConfigStorage
 import rs.fon.hakaton.audionav.storage.DataStoreReceiverRuntimeStorage
+import rs.fon.hakaton.audionav.tts.AndroidTtsAnnouncer
 
 class AppViewModelFactory(
     private val appContext: Context,
@@ -28,6 +29,7 @@ class AppViewModelFactory(
                 receiverRuntimeStorage = DataStoreReceiverRuntimeStorage.fromContext(appContext),
             ),
             rssiStabilizer = RssiStabilizer(),
+            ttsAnnouncer = AndroidTtsAnnouncer(appContext),
         ) as T
     }
 }

@@ -18,6 +18,7 @@ class RssiStabilizerTest {
         assertEquals(1, (first as RssiStabilizationResult.Tracking).progress)
         assertEquals(2, (second as RssiStabilizationResult.Tracking).progress)
         assertTrue(third is RssiStabilizationResult.Stable)
+        assertEquals(-69, (third as RssiStabilizationResult.Stable).smoothedRssi)
     }
 
     @Test

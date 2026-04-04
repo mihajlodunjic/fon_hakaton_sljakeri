@@ -17,6 +17,9 @@ import rs.fon.hakaton.audionav.ble.BeaconAdvertiserController
 import rs.fon.hakaton.audionav.ble.BeaconPayloadCodec
 import rs.fon.hakaton.audionav.ble.BeaconScanEvent
 import rs.fon.hakaton.audionav.ble.BeaconScannerController
+import rs.fon.hakaton.audionav.domain.AnnouncementArbiter
+import rs.fon.hakaton.audionav.domain.AnnouncementArbitrationResult
+import rs.fon.hakaton.audionav.domain.AnnouncementCandidate
 import rs.fon.hakaton.audionav.domain.AppMode
 import rs.fon.hakaton.audionav.domain.AppUiState
 import rs.fon.hakaton.audionav.domain.BeaconConfig
@@ -28,6 +31,7 @@ import rs.fon.hakaton.audionav.domain.MessageCatalog
 import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.domain.PermissionUiState
 import rs.fon.hakaton.audionav.domain.PointType
+import rs.fon.hakaton.audionav.domain.PendingAnnouncementResult
 import rs.fon.hakaton.audionav.domain.Priority
 import rs.fon.hakaton.audionav.domain.ReceiverScreenState
 import rs.fon.hakaton.audionav.domain.RssiRejectionReason
@@ -36,6 +40,11 @@ import rs.fon.hakaton.audionav.domain.RssiStabilizer
 import rs.fon.hakaton.audionav.storage.BeaconConfigStorage
 import rs.fon.hakaton.audionav.storage.CooldownCheckResult
 import rs.fon.hakaton.audionav.storage.CooldownRepository
+import rs.fon.hakaton.audionav.tts.TtsAnnouncer
+import rs.fon.hakaton.audionav.tts.TtsPlaybackEvent
+import rs.fon.hakaton.audionav.tts.TtsSpeakResult
+import rs.fon.hakaton.audionav.tts.TtsStatus
+import rs.fon.hakaton.audionav.tts.toDisplayText
 
 class AppViewModel(
     private val beaconConfigStorage: BeaconConfigStorage,
@@ -43,6 +52,9 @@ class AppViewModel(
     private val beaconScannerController: BeaconScannerController,
     private val cooldownRepository: CooldownRepository,
     private val rssiStabilizer: RssiStabilizer,
+    private val ttsAnnouncer: TtsAnnouncer,
+    private val announcementArbiter: AnnouncementArbiter = AnnouncementArbiter(),
+    private val timeProvider: () -> Long = { System.currentTimeMillis() },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(createInitialUiState())
@@ -50,8 +62,27 @@ class AppViewModel(
 
     private var receiverRetryJob: Job? = null
     private var receiverAutoRestartAllowed: Boolean = false
+    private var announcementGapJob: Job? = null
+    private var announcementGapUntilMs: Long? = null
 
     init {
+        ttsAnnouncer.initialize(
+            onStatusChanged = { status ->
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                ttsStatus = status,
+                                ttsStatusText = status.toDisplayText(),
+                            ),
+                        ),
+                    )
+                }
+            },
+            onPlaybackEvent = ::handleTtsPlaybackEvent,
+        )
+
         viewModelScope.launch {
             val snapshot = cooldownRepository.initialize()
             val lastAnnouncementAt = snapshot.recentEvents.firstOrNull { it.wasAnnounced }?.detectedAt
@@ -324,6 +355,8 @@ class AppViewModel(
 
         receiverAutoRestartAllowed = true
         cancelReceiverRetry()
+        cancelAnnouncementGap()
+        announcementArbiter.clear()
         rssiStabilizer.reset()
 
         val errorMessage = when {
@@ -373,6 +406,7 @@ class AppViewModel(
                         stabilizationProgress = 0,
                         lastGateDecisionText = null,
                         lastEligibleForAnnouncement = null,
+                        lastArbitrationDecisionText = null,
                     ),
                 ),
             )
@@ -511,6 +545,10 @@ class AppViewModel(
             )
         ) {
             is RssiStabilizationResult.Tracking -> {
+                AppLogger.d(
+                    LogTag.RSSI,
+                    "Tracking beaconId=${event.payload.beaconId}, progress=${stabilizationResult.progress}/${_uiState.value.receiverState.requiredStabilizationCount}, rssi=${event.rssi}",
+                )
                 _uiState.update { state ->
                     state.copy(
                         receiverState = recomputeReceiverState(
@@ -526,6 +564,10 @@ class AppViewModel(
             }
 
             is RssiStabilizationResult.Rejected -> {
+                AppLogger.d(
+                    LogTag.RSSI,
+                    "Rejected beaconId=${event.payload.beaconId}, reason=${stabilizationResult.reason}, rssi=${event.rssi}",
+                )
                 val progress = when (stabilizationResult.reason) {
                     RssiRejectionReason.BELOW_THRESHOLD -> 0
                     RssiRejectionReason.SIGNAL_GAP_RESET -> 1
@@ -555,6 +597,10 @@ class AppViewModel(
             }
 
             is RssiStabilizationResult.Stable -> {
+                AppLogger.d(
+                    LogTag.RSSI,
+                    "Stable beaconId=${event.payload.beaconId}, messageCode=${event.payload.messageCode}, rssi=${event.rssi}, smoothedRssi=${stabilizationResult.smoothedRssi}",
+                )
                 handleStableBeacon(stabilizationResult, decodedText)
             }
         }
@@ -565,49 +611,452 @@ class AppViewModel(
         decodedText: String,
     ) {
         viewModelScope.launch {
+            val messageDefinition = MessageCatalog.resolve(
+                pointType = result.payload.pointType,
+                messageCode = result.payload.messageCode,
+            )
             val cooldownResult = cooldownRepository.check(
                 beaconId = result.payload.beaconId,
                 messageCode = result.payload.messageCode,
                 now = result.detectedAt,
             )
+            val gateText = gateDecisionText(cooldownResult)
+            if (cooldownResult.isBlocked) {
+                AppLogger.d(
+                    LogTag.RSSI,
+                    "Gate blocked beaconId=${result.payload.beaconId}, messageCode=${result.payload.messageCode}, remainingMs=${cooldownResult.remainingMs}",
+                )
+                persistReceiverDecision(
+                    payload = result.payload,
+                    detectedAt = result.detectedAt,
+                    rssi = result.smoothedRssi,
+                    wasAnnounced = false,
+                    gateText = gateText,
+                    arbitrationText = "Kandidat je odbacen zbog cooldown-a.",
+                )
+                return@launch
+            }
 
-            val wasAnnounced = !cooldownResult.isBlocked
-            val detectedEvent = DetectedBeaconEvent(
+            AppLogger.d(
+                LogTag.RSSI,
+                "Gate allowed beaconId=${result.payload.beaconId}, messageCode=${result.payload.messageCode}, detectedAt=${result.detectedAt}",
+            )
+
+            if (messageDefinition == null) {
+                AppLogger.w(
+                    LogTag.TTS,
+                    "Skipping TTS for beaconId=${result.payload.beaconId}, messageCode=${result.payload.messageCode}: no local message definition",
+                )
+                persistReceiverDecision(
+                    payload = result.payload,
+                    detectedAt = result.detectedAt,
+                    rssi = result.smoothedRssi,
+                    wasAnnounced = false,
+                    gateText = gateText,
+                    arbitrationText = "Nema lokalne TTS poruke za ovaj beacon.",
+                    ttsError = "Nema lokalne TTS poruke za ovaj beacon.",
+                )
+                return@launch
+            }
+
+            val candidate = AnnouncementCandidate(
                 beaconId = result.payload.beaconId,
-                detectedAt = result.detectedAt,
-                rssi = result.rssi,
+                messageCode = result.payload.messageCode,
                 pointType = result.payload.pointType,
                 priority = result.payload.priority,
-                messageCode = result.payload.messageCode,
-                wasAnnounced = wasAnnounced,
+                ttsText = messageDefinition.ttsText,
+                decodedText = decodedText,
+                detectedAt = result.detectedAt,
+                smoothedRssi = result.smoothedRssi,
             )
-            cooldownRepository.recordStableEvent(detectedEvent)
 
-            val recentEvents = cooldownRepository.recentEvents()
-            val gateText = gateDecisionText(cooldownResult)
+            handleArbitrationDecision(
+                decision = announcementArbiter.submitCandidate(
+                    candidate = candidate,
+                    canSpeakImmediately = canSpeakImmediately(result.detectedAt),
+                ),
+                gateText = gateText,
+            )
+        }
+    }
 
-            _uiState.update { state ->
-                state.copy(
-                    receiverState = recomputeReceiverState(
-                        state,
-                        state.receiverState.copy(
-                            lastDetectedBeaconId = result.payload.beaconId,
-                            lastDetectedPointType = result.payload.pointType,
-                            lastDetectedPriority = result.payload.priority,
-                            lastDetectedMessageCode = result.payload.messageCode,
-                            lastDetectedAt = result.detectedAt,
-                            lastRssi = result.rssi,
-                            lastDecodedText = decodedText,
-                            stabilizationProgress = state.receiverState.requiredStabilizationCount,
-                            lastGateDecisionText = gateText,
-                            lastEligibleForAnnouncement = wasAnnounced,
-                            lastAnnouncementAt = if (wasAnnounced) result.detectedAt else state.receiverState.lastAnnouncementAt,
-                            recentEvents = recentEvents,
+    private fun handleArbitrationDecision(
+        decision: AnnouncementArbitrationResult,
+        gateText: String,
+    ) {
+        when (decision) {
+            is AnnouncementArbitrationResult.SpeakNow -> {
+                queueAnnouncementCandidate(
+                    candidate = decision.candidate,
+                    gateText = gateText,
+                    arbitrationText = "Kandidat ide odmah u glasovnu najavu.",
+                )
+            }
+
+            is AnnouncementArbitrationResult.Queued -> {
+                AppLogger.d(
+                    LogTag.TTS,
+                    "Candidate queued beaconId=${decision.candidate.beaconId}, priority=${decision.candidate.priority}, rssi=${decision.candidate.smoothedRssi}",
+                )
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                lastGateDecisionText = gateText,
+                                lastEligibleForAnnouncement = null,
+                                lastArbitrationDecisionText = "Kandidat ceka zavrsetak trenutne poruke.",
+                            ),
                         ),
+                    )
+                }
+            }
+
+            is AnnouncementArbitrationResult.ReplacedPending -> {
+                AppLogger.d(
+                    LogTag.TTS,
+                    "Pending candidate replaced oldBeaconId=${decision.previousCandidate.beaconId}, newBeaconId=${decision.replacementCandidate.beaconId}",
+                )
+                viewModelScope.launch {
+                    recordBackgroundDroppedCandidate(
+                        candidate = decision.previousCandidate,
+                        arbitrationText = "Kandidat je zamenjen boljim cekajucim beacon-om.",
+                    )
+                    _uiState.update { state ->
+                        state.copy(
+                            receiverState = recomputeReceiverState(
+                                state,
+                                state.receiverState.copy(
+                                    lastGateDecisionText = gateText,
+                                    lastEligibleForAnnouncement = null,
+                                    lastArbitrationDecisionText = "Cekajuci kandidat je zamenjen boljim beacon-om.",
+                                ),
+                            ),
+                        )
+                    }
+                }
+            }
+
+            is AnnouncementArbitrationResult.RefreshedPending -> {
+                AppLogger.d(
+                    LogTag.TTS,
+                    "Pending candidate refreshed beaconId=${decision.candidate.beaconId}, rssi=${decision.candidate.smoothedRssi}",
+                )
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                lastGateDecisionText = gateText,
+                                lastEligibleForAnnouncement = null,
+                                lastArbitrationDecisionText = "Cekajuci kandidat je osvezen novijim signalom.",
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            is AnnouncementArbitrationResult.DroppedLowerRank -> {
+                AppLogger.d(
+                    LogTag.TTS,
+                    "Candidate dropped by arbiter beaconId=${decision.candidate.beaconId}, priority=${decision.candidate.priority}, rssi=${decision.candidate.smoothedRssi}",
+                )
+                viewModelScope.launch {
+                    persistReceiverDecision(
+                        payload = decision.candidate.toPayload(),
+                        detectedAt = decision.candidate.detectedAt,
+                        rssi = decision.candidate.smoothedRssi,
+                        wasAnnounced = false,
+                        gateText = gateText,
+                        arbitrationText = "Kandidat je odbacen jer postoji vazniji ili blizi beacon.",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun queueAnnouncementCandidate(
+        candidate: AnnouncementCandidate,
+        gateText: String,
+        arbitrationText: String,
+        preserveLastDetection: Boolean = false,
+    ) {
+        val utteranceId = "audionav-${UUID.randomUUID()}"
+        when (
+            val speakResult = ttsAnnouncer.announce(
+                text = candidate.ttsText,
+                utteranceId = utteranceId,
+            )
+        ) {
+            TtsSpeakResult.Queued -> {
+                val announcedAt = maxOf(candidate.detectedAt, timeProvider())
+                AppLogger.d(
+                    LogTag.TTS,
+                    "TTS queued beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}, utteranceId=$utteranceId",
+                )
+                announcementArbiter.onAnnouncementQueued(candidate, utteranceId)
+                viewModelScope.launch {
+                    persistReceiverDecision(
+                        payload = candidate.toPayload(),
+                        detectedAt = candidate.detectedAt,
+                        rssi = candidate.smoothedRssi,
+                        wasAnnounced = true,
+                        gateText = gateText,
+                        arbitrationText = arbitrationText,
+                        preserveLastDetection = preserveLastDetection,
+                        announcedAt = announcedAt,
+                        spokenText = candidate.ttsText,
+                        spokenAt = announcedAt,
+                    )
+                }
+            }
+
+            is TtsSpeakResult.Failed -> {
+                AppLogger.e(
+                    LogTag.TTS,
+                    "TTS failed before queue beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}: ${speakResult.message}",
+                )
+                viewModelScope.launch {
+                    persistReceiverDecision(
+                        payload = candidate.toPayload(),
+                        detectedAt = candidate.detectedAt,
+                        rssi = candidate.smoothedRssi,
+                        wasAnnounced = false,
+                        gateText = gateText,
+                        arbitrationText = "Kandidat nije mogao da bude zakazan u TTS.",
+                        preserveLastDetection = preserveLastDetection,
+                        ttsError = speakResult.message,
+                    )
+                }
+            }
+
+            is TtsSpeakResult.SkippedNotReady -> {
+                AppLogger.w(
+                    LogTag.TTS,
+                    "TTS skipped before queue beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}: ${speakResult.message}",
+                )
+                viewModelScope.launch {
+                    persistReceiverDecision(
+                        payload = candidate.toPayload(),
+                        detectedAt = candidate.detectedAt,
+                        rssi = candidate.smoothedRssi,
+                        wasAnnounced = false,
+                        gateText = gateText,
+                        arbitrationText = "Kandidat nije mogao da bude zakazan u TTS.",
+                        preserveLastDetection = preserveLastDetection,
+                        ttsError = speakResult.message,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun handleTtsPlaybackEvent(event: TtsPlaybackEvent) {
+        viewModelScope.launch {
+            when (event) {
+                is TtsPlaybackEvent.Started -> {
+                    AppLogger.d(LogTag.TTS, "TTS playback started for utteranceId=${event.utteranceId}")
+                }
+
+                is TtsPlaybackEvent.Done -> {
+                    AppLogger.d(LogTag.TTS, "TTS playback done for utteranceId=${event.utteranceId}")
+                    val finishedAnnouncement = announcementArbiter.onPlaybackFinished(event.utteranceId)
+                    if (finishedAnnouncement != null) {
+                        scheduleAnnouncementGap()
+                    }
+                }
+
+                is TtsPlaybackEvent.Error -> {
+                    AppLogger.e(
+                        LogTag.TTS,
+                        "TTS playback error for utteranceId=${event.utteranceId}: ${event.message}",
+                    )
+                    val finishedAnnouncement = announcementArbiter.onPlaybackFinished(event.utteranceId)
+                    if (finishedAnnouncement != null) {
+                        _uiState.update { state ->
+                            state.copy(
+                                receiverState = recomputeReceiverState(
+                                    state,
+                                    state.receiverState.copy(
+                                        lastTtsError = event.message,
+                                        lastArbitrationDecisionText = "Doslo je do TTS greske tokom reprodukcije.",
+                                    ),
+                                ),
+                            )
+                        }
+                        dispatchPendingAnnouncementIfPossible()
+                    }
+                }
+
+                is TtsPlaybackEvent.Stopped -> {
+                    AppLogger.d(LogTag.TTS, "TTS playback stopped for utteranceId=${event.utteranceId}")
+                    val finishedAnnouncement = announcementArbiter.onPlaybackFinished(event.utteranceId)
+                    if (finishedAnnouncement != null) {
+                        dispatchPendingAnnouncementIfPossible()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun scheduleAnnouncementGap() {
+        cancelAnnouncementGap()
+        val gapStart = timeProvider()
+        announcementGapUntilMs = gapStart + GLOBAL_ANNOUNCEMENT_GAP_MS
+        _uiState.update { state ->
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    state.receiverState.copy(
+                        lastArbitrationDecisionText = "Globalni razmak izmedju dve najave je aktivan.",
                     ),
+                ),
+            )
+        }
+
+        announcementGapJob = viewModelScope.launch {
+            delay(GLOBAL_ANNOUNCEMENT_GAP_MS)
+            announcementGapJob = null
+            announcementGapUntilMs = null
+            dispatchPendingAnnouncementIfPossible()
+        }
+    }
+
+    private suspend fun dispatchPendingAnnouncementIfPossible() {
+        val now = timeProvider()
+        if (isAnnouncementGapActive(now)) {
+            return
+        }
+        if (announcementArbiter.currentActive() != null) {
+            return
+        }
+
+        when (val pendingResult = announcementArbiter.takePendingCandidate(now)) {
+            PendingAnnouncementResult.None -> {
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(state, state.receiverState),
+                    )
+                }
+            }
+
+            is PendingAnnouncementResult.DroppedStale -> {
+                AppLogger.d(
+                    LogTag.TTS,
+                    "Pending candidate stale beaconId=${pendingResult.candidate.beaconId}, detectedAt=${pendingResult.candidate.detectedAt}",
+                )
+                persistReceiverDecision(
+                    payload = pendingResult.candidate.toPayload(),
+                    detectedAt = pendingResult.candidate.detectedAt,
+                    rssi = pendingResult.candidate.smoothedRssi,
+                    wasAnnounced = false,
+                    gateText = "Najava dozvoljena.",
+                    arbitrationText = "Kandidat je zastareo pre glasovne najave.",
+                    preserveLastDetection = true,
+                )
+            }
+
+            is PendingAnnouncementResult.Ready -> {
+                AppLogger.d(
+                    LogTag.TTS,
+                    "Pending candidate promoted beaconId=${pendingResult.candidate.beaconId}, priority=${pendingResult.candidate.priority}, rssi=${pendingResult.candidate.smoothedRssi}",
+                )
+                queueAnnouncementCandidate(
+                    candidate = pendingResult.candidate,
+                    gateText = "Najava dozvoljena.",
+                    arbitrationText = "Cekajuci kandidat je dosao na red za glasovnu najavu.",
+                    preserveLastDetection = true,
                 )
             }
         }
+    }
+
+    private suspend fun recordBackgroundDroppedCandidate(
+        candidate: AnnouncementCandidate,
+        arbitrationText: String,
+    ) {
+        persistReceiverDecision(
+            payload = candidate.toPayload(),
+            detectedAt = candidate.detectedAt,
+            rssi = candidate.smoothedRssi,
+            wasAnnounced = false,
+            gateText = "Najava dozvoljena.",
+            arbitrationText = arbitrationText,
+            preserveLastDetection = true,
+        )
+    }
+
+    private suspend fun persistReceiverDecision(
+        payload: rs.fon.hakaton.audionav.domain.DecodedBeaconPayload,
+        detectedAt: Long,
+        rssi: Int,
+        wasAnnounced: Boolean,
+        gateText: String,
+        arbitrationText: String,
+        preserveLastDetection: Boolean = false,
+        ttsError: String? = null,
+        announcedAt: Long = detectedAt,
+        spokenText: String? = null,
+        spokenAt: Long? = null,
+    ) {
+        val detectedEvent = DetectedBeaconEvent(
+            beaconId = payload.beaconId,
+            detectedAt = detectedAt,
+            rssi = rssi,
+            pointType = payload.pointType,
+            priority = payload.priority,
+            messageCode = payload.messageCode,
+            wasAnnounced = wasAnnounced,
+        )
+        cooldownRepository.recordStableEvent(detectedEvent, announcedAt)
+        val recentEvents = cooldownRepository.recentEvents()
+
+        _uiState.update { state ->
+            val updatedReceiverState = state.receiverState.copy(
+                lastGateDecisionText = gateText,
+                lastEligibleForAnnouncement = wasAnnounced,
+                lastAnnouncementAt = if (wasAnnounced) announcedAt else state.receiverState.lastAnnouncementAt,
+                recentEvents = recentEvents,
+                lastTtsError = ttsError,
+                lastSpokenText = spokenText ?: state.receiverState.lastSpokenText,
+                lastSpokenAt = spokenAt ?: state.receiverState.lastSpokenAt,
+                lastArbitrationDecisionText = arbitrationText,
+            )
+
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    if (preserveLastDetection) {
+                        updatedReceiverState
+                    } else {
+                        updatedReceiverState.copy(
+                            lastDetectedBeaconId = payload.beaconId,
+                            lastDetectedPointType = payload.pointType,
+                            lastDetectedPriority = payload.priority,
+                            lastDetectedMessageCode = payload.messageCode,
+                            lastDetectedAt = detectedAt,
+                            lastRssi = rssi,
+                        )
+                    },
+                ),
+            )
+        }
+    }
+
+    private fun isAnnouncementGapActive(now: Long): Boolean {
+        val gapUntil = announcementGapUntilMs ?: return false
+        return if (now >= gapUntil) {
+            announcementGapUntilMs = null
+            false
+        } else {
+            true
+        }
+    }
+
+    private fun canSpeakImmediately(now: Long): Boolean {
+        return !isAnnouncementGapActive(now) &&
+            announcementArbiter.currentActive() == null &&
+            announcementArbiter.currentPending() == null
     }
 
     private fun gateDecisionText(cooldownResult: CooldownCheckResult): String {
@@ -674,7 +1123,9 @@ class AppViewModel(
     private fun stopReceiverScanning(errorText: String?) {
         receiverAutoRestartAllowed = false
         cancelReceiverRetry()
+        cancelAnnouncementGap()
         beaconScannerController.stopScanning()
+        announcementArbiter.clear()
         rssiStabilizer.reset()
 
         _uiState.update { state ->
@@ -688,6 +1139,7 @@ class AppViewModel(
                         stabilizationProgress = 0,
                         lastGateDecisionText = null,
                         lastEligibleForAnnouncement = null,
+                        lastArbitrationDecisionText = null,
                     ),
                 ),
             )
@@ -697,6 +1149,12 @@ class AppViewModel(
     private fun cancelReceiverRetry() {
         receiverRetryJob?.cancel()
         receiverRetryJob = null
+    }
+
+    private fun cancelAnnouncementGap() {
+        announcementGapJob?.cancel()
+        announcementGapJob = null
+        announcementGapUntilMs = null
     }
 
     private fun isReceiverRuntimeReady(state: AppUiState): Boolean {
@@ -802,6 +1260,15 @@ class AppViewModel(
             scannerSupported = scannerSupported,
             isReady = isReady,
             statusText = statusText,
+            currentAnnouncementBeaconId = announcementArbiter.currentActive()?.candidate?.beaconId,
+            currentAnnouncementText = announcementArbiter.currentActive()?.candidate?.ttsText,
+            currentAnnouncementPriority = announcementArbiter.currentActive()?.candidate?.priority,
+            currentAnnouncementRssi = announcementArbiter.currentActive()?.candidate?.smoothedRssi,
+            pendingAnnouncementBeaconId = announcementArbiter.currentPending()?.beaconId,
+            pendingAnnouncementText = announcementArbiter.currentPending()?.ttsText,
+            pendingAnnouncementPriority = announcementArbiter.currentPending()?.priority,
+            pendingAnnouncementRssi = announcementArbiter.currentPending()?.smoothedRssi,
+            globalAnnouncementGapUntil = announcementGapUntilMs,
         )
     }
 
@@ -839,8 +1306,26 @@ class AppViewModel(
         return (remainingMs + 999L) / 1_000L
     }
 
+    override fun onCleared() {
+        cancelAnnouncementGap()
+        announcementArbiter.clear()
+        super.onCleared()
+        ttsAnnouncer.shutdown()
+    }
+
     companion object {
         private const val RECEIVER_RETRY_DELAY_MS = 3_000L
+        private const val GLOBAL_ANNOUNCEMENT_GAP_MS = 2_000L
         private const val UNKNOWN_LOCAL_MESSAGE_TEXT = "Nepoznata lokalna poruka za ovaj beacon."
     }
+}
+
+private fun AnnouncementCandidate.toPayload(): rs.fon.hakaton.audionav.domain.DecodedBeaconPayload {
+    return rs.fon.hakaton.audionav.domain.DecodedBeaconPayload(
+        protocolVersion = 1,
+        beaconId = beaconId,
+        pointType = pointType,
+        priority = priority,
+        messageCode = messageCode,
+    )
 }

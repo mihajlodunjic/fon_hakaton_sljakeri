@@ -27,6 +27,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import rs.fon.hakaton.audionav.domain.BeaconScreenState
@@ -55,7 +57,7 @@ fun BeaconScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Beacon Mode") },
+                title = { Text("Beacon mod") },
                 navigationIcon = {
                     TextButton(onClick = onNavigateBack) {
                         Text("Nazad")
@@ -72,7 +74,11 @@ fun BeaconScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Kartica beacon identifikatora" },
+            ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -90,13 +96,13 @@ fun BeaconScreen(
                 value = state.labelInput,
                 onValueChange = onLabelChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Label") },
+                label = { Text("Oznaka") },
                 enabled = !state.isAdvertising,
                 singleLine = true,
             )
 
             BeaconDropdownField(
-                label = "Point type",
+                label = "Tip tacke",
                 selectedLabel = state.selectedPointType.displayName,
                 options = MessageCatalog.supportedPointTypes(),
                 optionLabel = { it.displayName },
@@ -105,7 +111,7 @@ fun BeaconScreen(
             )
 
             BeaconDropdownField(
-                label = "Priority",
+                label = "Prioritet",
                 selectedLabel = state.selectedPriority.displayName,
                 options = Priority.entries.toList(),
                 optionLabel = { it.displayName },
@@ -114,7 +120,7 @@ fun BeaconScreen(
             )
 
             BeaconDropdownField(
-                label = "Message",
+                label = "Poruka",
                 selectedLabel = selectedMessage?.operatorLabel ?: "Nije definisana",
                 options = state.availableMessages,
                 optionLabel = { "${it.messageCode} - ${it.operatorLabel}" },
@@ -122,7 +128,11 @@ fun BeaconScreen(
                 onSelected = { onMessageSelected(it.messageCode) },
             )
 
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Kartica statusa beacon moda" },
+            ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -132,8 +142,8 @@ fun BeaconScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text("State: ${state.statusText}")
-                    Text("Advertiser supported: ${if (state.advertiserSupported) "Da" else "Ne"}")
+                    Text("Stanje: ${state.statusText}")
+                    Text("Advertising podrzan: ${if (state.advertiserSupported) "Da" else "Ne"}")
                     Text(readinessMessage, style = MaterialTheme.typography.bodyMedium)
                     state.errorText?.let { errorText ->
                         Text(
@@ -165,20 +175,22 @@ fun BeaconScreen(
                 onClick = onStartClick,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics { contentDescription = "Pokreni beacon emitovanje" }
                     .sizeIn(minHeight = 56.dp),
                 enabled = state.isReady && !state.isAdvertising,
             ) {
-                Text("Start Broadcasting")
+                Text("Pokreni emitovanje")
             }
 
             OutlinedButton(
                 onClick = onStopClick,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics { contentDescription = "Zaustavi beacon emitovanje" }
                     .sizeIn(minHeight = 56.dp),
                 enabled = state.isAdvertising,
             ) {
-                Text("Stop")
+                Text("Zaustavi")
             }
         }
     }

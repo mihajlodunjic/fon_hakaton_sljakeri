@@ -19,6 +19,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import rs.fon.hakaton.audionav.domain.ReceiverScreenState
@@ -32,10 +34,19 @@ fun ReceiverScreen(
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
 ) {
+    val voiceAnnouncementStatus = when {
+        state.lastEligibleForAnnouncement != true && state.lastTtsError == null && state.lastSpokenAt == null -> {
+            "Nije pokusana"
+        }
+        state.lastTtsError != null -> "Nije zakazana"
+        state.lastEligibleForAnnouncement == true -> "Uspesno zakazana"
+        else -> "Ceka se ishod TTS-a"
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Receiver Mode") },
+                title = { Text("Receiver mod") },
                 navigationIcon = {
                     TextButton(onClick = onNavigateBack) {
                         Text("Nazad")
@@ -52,7 +63,11 @@ fun ReceiverScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Kartica statusa receiver moda" },
+            ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -62,8 +77,8 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text("State: ${state.statusText}")
-                    Text("Scanner supported: ${if (state.scannerSupported) "Da" else "Ne"}")
+                    Text("Stanje: ${state.statusText}")
+                    Text("Scanner podrzan: ${if (state.scannerSupported) "Da" else "Ne"}")
                     Text(readinessMessage, style = MaterialTheme.typography.bodyMedium)
                     state.errorText?.let { errorText ->
                         Text(
@@ -87,7 +102,7 @@ fun ReceiverScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Poslednja detekcija",
+                        text = "Poslednji signal",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -96,11 +111,11 @@ fun ReceiverScreen(
                             ?: "Ovde ce se prikazivati poslednji validni beacon dogadjaj.",
                     )
                     Text("Beacon ID: ${state.lastDetectedBeaconId ?: "-"}")
-                    Text("Point type: ${state.lastDetectedPointType?.displayName ?: "-"}")
-                    Text("Priority: ${state.lastDetectedPriority?.displayName ?: "-"}")
-                    Text("Message code: ${state.lastDetectedMessageCode?.toString() ?: "-"}")
+                    Text("Tip tacke: ${state.lastDetectedPointType?.displayName ?: "-"}")
+                    Text("Prioritet: ${state.lastDetectedPriority?.displayName ?: "-"}")
+                    Text("Kod poruke: ${state.lastDetectedMessageCode?.toString() ?: "-"}")
                     Text("RSSI: ${state.lastRssi?.toString() ?: "-"}")
-                    Text("Detected at: ${state.lastDetectedAt?.toString() ?: "-"}")
+                    Text("Detektovano u: ${state.lastDetectedAt?.toString() ?: "-"}")
                 }
             }
 
@@ -136,16 +151,70 @@ fun ReceiverScreen(
                     )
                     Text(
                         text = when (state.lastEligibleForAnnouncement) {
-                            true -> "Najava bi bila dozvoljena."
-                            false -> "Najava trenutno nije dozvoljena."
-                            null -> "Najava jos nije razmatrana."
+                            true -> "Najava dozvoljena po gate-u."
+                            false -> "Najava trenutno nije dozvoljena po gate-u."
+                            null -> "Gate odluka jos nije doneta."
                         },
                     )
-                    Text("Last announcement at: ${state.lastAnnouncementAt?.toString() ?: "-"}")
+                    Text("Poslednja dozvoljena najava: ${state.lastAnnouncementAt?.toString() ?: "-"}")
+                    Text("Glasovna najava: $voiceAnnouncementStatus")
                     Text(
                         text = state.lastGateDecisionText
                             ?: "Cooldown odluka ce biti prikazana kada signal postane stabilan.",
                     )
+                    Text(
+                        text = state.lastArbitrationDecisionText
+                            ?: "Arbitraza prioriteta i blizine jos nije aktivirana.",
+                    )
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Scheduler najava",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text("Trenutno govori beacon: ${state.currentAnnouncementBeaconId ?: "-"}")
+                    Text("Tekst trenutne najave: ${state.currentAnnouncementText ?: "-"}")
+                    Text("Prioritet trenutne najave: ${state.currentAnnouncementPriority?.displayName ?: "-"}")
+                    Text("Stabilizovan RSSI trenutne najave: ${state.currentAnnouncementRssi?.toString() ?: "-"}")
+                    Text("Cekajuci beacon: ${state.pendingAnnouncementBeaconId ?: "-"}")
+                    Text("Tekst cekajuce najave: ${state.pendingAnnouncementText ?: "-"}")
+                    Text("Prioritet cekajuce najave: ${state.pendingAnnouncementPriority?.displayName ?: "-"}")
+                    Text("Stabilizovan RSSI cekajuce najave: ${state.pendingAnnouncementRssi?.toString() ?: "-"}")
+                    Text("Globalni gap aktivan do: ${state.globalAnnouncementGapUntil?.toString() ?: "-"}")
+                }
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Kartica TTS statusa" },
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "TTS status",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text("Status: ${state.ttsStatusText}")
+                    Text("Poslednja izgovorena poruka: ${state.lastSpokenText ?: "-"}")
+                    Text("Poslednja glasovna najava u: ${state.lastSpokenAt?.toString() ?: "-"}")
+                    state.lastTtsError?.let { ttsError ->
+                        Text(
+                            text = ttsError,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 }
             }
 
@@ -186,20 +255,22 @@ fun ReceiverScreen(
                 onClick = onStartClick,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics { contentDescription = "Pokreni receiver skeniranje" }
                     .sizeIn(minHeight = 56.dp),
                 enabled = state.isReady && !state.isScanning && state.scannerSupported,
             ) {
-                Text("Start Scanning")
+                Text("Pokreni skeniranje")
             }
 
             OutlinedButton(
                 onClick = onStopClick,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics { contentDescription = "Zaustavi receiver skeniranje" }
                     .sizeIn(minHeight = 56.dp),
                 enabled = state.isScanning || state.retryScheduled,
             ) {
-                Text("Stop")
+                Text("Zaustavi")
             }
         }
     }

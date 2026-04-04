@@ -1,5 +1,8 @@
 package rs.fon.hakaton.audionav.domain
 
+import rs.fon.hakaton.audionav.tts.TtsStatus
+import rs.fon.hakaton.audionav.tts.toDisplayText
+
 enum class AppMode {
     NONE,
     BEACON,
@@ -66,6 +69,21 @@ data class ReceiverScreenState(
     val lastEligibleForAnnouncement: Boolean? = null,
     val lastAnnouncementAt: Long? = null,
     val recentEvents: List<DetectedBeaconEvent> = emptyList(),
+    val ttsStatus: TtsStatus = TtsStatus.INITIALIZING,
+    val ttsStatusText: String = TtsStatus.INITIALIZING.toDisplayText(),
+    val lastSpokenText: String? = null,
+    val lastSpokenAt: Long? = null,
+    val lastTtsError: String? = null,
+    val currentAnnouncementBeaconId: String? = null,
+    val currentAnnouncementText: String? = null,
+    val currentAnnouncementPriority: Priority? = null,
+    val currentAnnouncementRssi: Int? = null,
+    val pendingAnnouncementBeaconId: String? = null,
+    val pendingAnnouncementText: String? = null,
+    val pendingAnnouncementPriority: Priority? = null,
+    val pendingAnnouncementRssi: Int? = null,
+    val lastArbitrationDecisionText: String? = null,
+    val globalAnnouncementGapUntil: Long? = null,
 )
 
 data class AppUiState(
