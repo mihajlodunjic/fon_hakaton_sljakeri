@@ -1,5 +1,7 @@
 package rs.fon.hakaton.audionav.ui.screens.receiver
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -46,6 +48,7 @@ fun ReceiverScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
@@ -98,6 +101,84 @@ fun ReceiverScreen(
                     Text("Message code: ${state.lastDetectedMessageCode?.toString() ?: "-"}")
                     Text("RSSI: ${state.lastRssi?.toString() ?: "-"}")
                     Text("Detected at: ${state.lastDetectedAt?.toString() ?: "-"}")
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Stabilizacija",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "${state.stabilizationProgress}/${state.requiredStabilizationCount} iznad ${state.rssiThreshold} dBm",
+                    )
+                    Text(
+                        text = state.lastGateDecisionText
+                            ?: "Ceka se dovoljan broj uzastopnih validnih RSSI ocitavanja.",
+                    )
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Cooldown i odluka",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = when (state.lastEligibleForAnnouncement) {
+                            true -> "Najava bi bila dozvoljena."
+                            false -> "Najava trenutno nije dozvoljena."
+                            null -> "Najava jos nije razmatrana."
+                        },
+                    )
+                    Text("Last announcement at: ${state.lastAnnouncementAt?.toString() ?: "-"}")
+                    Text(
+                        text = state.lastGateDecisionText
+                            ?: "Cooldown odluka ce biti prikazana kada signal postane stabilan.",
+                    )
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Skorasnji dogadjaji",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (state.recentEvents.isEmpty()) {
+                        Text("Jos nema stabilizovanih receiver odluka.")
+                    } else {
+                        state.recentEvents.take(5).forEach { event ->
+                            Text(
+                                text = buildString {
+                                    append(event.beaconId)
+                                    append(" | msg=")
+                                    append(event.messageCode)
+                                    append(" | RSSI=")
+                                    append(event.rssi)
+                                    append(" | allowed=")
+                                    append(if (event.wasAnnounced) "da" else "ne")
+                                    append(" | at=")
+                                    append(event.detectedAt)
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
                 }
             }
 

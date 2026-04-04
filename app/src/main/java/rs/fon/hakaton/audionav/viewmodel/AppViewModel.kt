@@ -23,18 +23,26 @@ import rs.fon.hakaton.audionav.domain.BeaconConfig
 import rs.fon.hakaton.audionav.domain.BeaconConfigValidator
 import rs.fon.hakaton.audionav.domain.BeaconScreenState
 import rs.fon.hakaton.audionav.domain.BluetoothStatus
+import rs.fon.hakaton.audionav.domain.DetectedBeaconEvent
 import rs.fon.hakaton.audionav.domain.MessageCatalog
 import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.domain.PermissionUiState
 import rs.fon.hakaton.audionav.domain.PointType
 import rs.fon.hakaton.audionav.domain.Priority
 import rs.fon.hakaton.audionav.domain.ReceiverScreenState
+import rs.fon.hakaton.audionav.domain.RssiRejectionReason
+import rs.fon.hakaton.audionav.domain.RssiStabilizationResult
+import rs.fon.hakaton.audionav.domain.RssiStabilizer
 import rs.fon.hakaton.audionav.storage.BeaconConfigStorage
+import rs.fon.hakaton.audionav.storage.CooldownCheckResult
+import rs.fon.hakaton.audionav.storage.CooldownRepository
 
 class AppViewModel(
     private val beaconConfigStorage: BeaconConfigStorage,
     private val beaconAdvertiserController: BeaconAdvertiserController,
     private val beaconScannerController: BeaconScannerController,
+    private val cooldownRepository: CooldownRepository,
+    private val rssiStabilizer: RssiStabilizer,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(createInitialUiState())
@@ -42,6 +50,21 @@ class AppViewModel(
 
     private var receiverRetryJob: Job? = null
     private var receiverAutoRestartAllowed: Boolean = false
+
+    init {
+        viewModelScope.launch {
+            val snapshot = cooldownRepository.initialize()
+            val lastAnnouncementAt = snapshot.recentEvents.firstOrNull { it.wasAnnounced }?.detectedAt
+            _uiState.update { state ->
+                state.copy(
+                    receiverState = state.receiverState.copy(
+                        recentEvents = snapshot.recentEvents,
+                        lastAnnouncementAt = lastAnnouncementAt,
+                    ),
+                )
+            }
+        }
+    }
 
     fun onModeSelected(mode: AppMode) {
         AppLogger.d(LogTag.APP, "Mode selected: $mode")
@@ -301,6 +324,7 @@ class AppViewModel(
 
         receiverAutoRestartAllowed = true
         cancelReceiverRetry()
+        rssiStabilizer.reset()
 
         val errorMessage = when {
             currentState.permissionUiState.status != PermissionStatus.GRANTED -> {
@@ -346,6 +370,9 @@ class AppViewModel(
                         isScanning = true,
                         retryScheduled = false,
                         errorText = null,
+                        stabilizationProgress = 0,
+                        lastGateDecisionText = null,
+                        lastEligibleForAnnouncement = null,
                     ),
                 ),
             )
@@ -400,36 +427,7 @@ class AppViewModel(
                 }
             }
 
-            is BeaconScanEvent.BeaconDetected -> {
-                val message = MessageCatalog.resolve(
-                    pointType = event.payload.pointType,
-                    messageCode = event.payload.messageCode,
-                )
-                val decodedText = message?.ttsText ?: "Nepoznata lokalna poruka za ovaj beacon."
-                AppLogger.d(
-                    LogTag.BLE_SCAN,
-                    "Beacon detected: beaconId=${event.payload.beaconId}, messageCode=${event.payload.messageCode}, rssi=${event.rssi}",
-                )
-                _uiState.update { state ->
-                    state.copy(
-                        receiverState = recomputeReceiverState(
-                            state,
-                            state.receiverState.copy(
-                                isScanning = true,
-                                retryScheduled = false,
-                                errorText = null,
-                                lastDetectedBeaconId = event.payload.beaconId,
-                                lastDetectedPointType = event.payload.pointType,
-                                lastDetectedPriority = event.payload.priority,
-                                lastDetectedMessageCode = event.payload.messageCode,
-                                lastDecodedText = decodedText,
-                                lastDetectedAt = event.detectedAt,
-                                lastRssi = event.rssi,
-                            ),
-                        ),
-                    )
-                }
-            }
+            is BeaconScanEvent.BeaconDetected -> handleDetectedBeacon(event)
 
             is BeaconScanEvent.Failure -> {
                 AppLogger.e(
@@ -473,8 +471,155 @@ class AppViewModel(
         }
     }
 
+    private fun handleDetectedBeacon(event: BeaconScanEvent.BeaconDetected) {
+        val message = MessageCatalog.resolve(
+            pointType = event.payload.pointType,
+            messageCode = event.payload.messageCode,
+        )
+        val decodedText = message?.ttsText ?: UNKNOWN_LOCAL_MESSAGE_TEXT
+
+        AppLogger.d(
+            LogTag.BLE_SCAN,
+            "Beacon detected: beaconId=${event.payload.beaconId}, messageCode=${event.payload.messageCode}, rssi=${event.rssi}",
+        )
+
+        _uiState.update { state ->
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    state.receiverState.copy(
+                        isScanning = true,
+                        retryScheduled = false,
+                        errorText = null,
+                        lastDetectedBeaconId = event.payload.beaconId,
+                        lastDetectedPointType = event.payload.pointType,
+                        lastDetectedPriority = event.payload.priority,
+                        lastDetectedMessageCode = event.payload.messageCode,
+                        lastDecodedText = decodedText,
+                        lastDetectedAt = event.detectedAt,
+                        lastRssi = event.rssi,
+                    ),
+                ),
+            )
+        }
+
+        when (
+            val stabilizationResult = rssiStabilizer.observe(
+                payload = event.payload,
+                rssi = event.rssi,
+                detectedAt = event.detectedAt,
+            )
+        ) {
+            is RssiStabilizationResult.Tracking -> {
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                stabilizationProgress = stabilizationResult.progress,
+                                lastGateDecisionText = "${stabilizationResult.progress}/${state.receiverState.requiredStabilizationCount} iznad ${stabilizationResult.threshold} dBm.",
+                                lastEligibleForAnnouncement = null,
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            is RssiStabilizationResult.Rejected -> {
+                val progress = when (stabilizationResult.reason) {
+                    RssiRejectionReason.BELOW_THRESHOLD -> 0
+                    RssiRejectionReason.SIGNAL_GAP_RESET -> 1
+                }
+                val gateText = when (stabilizationResult.reason) {
+                    RssiRejectionReason.BELOW_THRESHOLD -> {
+                        "Signal je ispod praga (${_uiState.value.receiverState.rssiThreshold} dBm)."
+                    }
+
+                    RssiRejectionReason.SIGNAL_GAP_RESET -> {
+                        "Reset zbog gubitka signala. Pocetak stabilizacije ${progress}/${_uiState.value.receiverState.requiredStabilizationCount}."
+                    }
+                }
+
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                stabilizationProgress = progress,
+                                lastGateDecisionText = gateText,
+                                lastEligibleForAnnouncement = false,
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            is RssiStabilizationResult.Stable -> {
+                handleStableBeacon(stabilizationResult, decodedText)
+            }
+        }
+    }
+
+    private fun handleStableBeacon(
+        result: RssiStabilizationResult.Stable,
+        decodedText: String,
+    ) {
+        viewModelScope.launch {
+            val cooldownResult = cooldownRepository.check(
+                beaconId = result.payload.beaconId,
+                messageCode = result.payload.messageCode,
+                now = result.detectedAt,
+            )
+
+            val wasAnnounced = !cooldownResult.isBlocked
+            val detectedEvent = DetectedBeaconEvent(
+                beaconId = result.payload.beaconId,
+                detectedAt = result.detectedAt,
+                rssi = result.rssi,
+                pointType = result.payload.pointType,
+                priority = result.payload.priority,
+                messageCode = result.payload.messageCode,
+                wasAnnounced = wasAnnounced,
+            )
+            cooldownRepository.recordStableEvent(detectedEvent)
+
+            val recentEvents = cooldownRepository.recentEvents()
+            val gateText = gateDecisionText(cooldownResult)
+
+            _uiState.update { state ->
+                state.copy(
+                    receiverState = recomputeReceiverState(
+                        state,
+                        state.receiverState.copy(
+                            lastDetectedBeaconId = result.payload.beaconId,
+                            lastDetectedPointType = result.payload.pointType,
+                            lastDetectedPriority = result.payload.priority,
+                            lastDetectedMessageCode = result.payload.messageCode,
+                            lastDetectedAt = result.detectedAt,
+                            lastRssi = result.rssi,
+                            lastDecodedText = decodedText,
+                            stabilizationProgress = state.receiverState.requiredStabilizationCount,
+                            lastGateDecisionText = gateText,
+                            lastEligibleForAnnouncement = wasAnnounced,
+                            lastAnnouncementAt = if (wasAnnounced) result.detectedAt else state.receiverState.lastAnnouncementAt,
+                            recentEvents = recentEvents,
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun gateDecisionText(cooldownResult: CooldownCheckResult): String {
+        return if (!cooldownResult.isBlocked) {
+            "Najava dozvoljena."
+        } else {
+            "Beacon je u cooldown-u jos ${formatRemainingCooldownSeconds(cooldownResult.remainingMs)}s."
+        }
+    }
+
     private fun scheduleReceiverRetry() {
-        if (receiverRetryJob?.isActive == true) {
+        if (receiverRetryJob != null) {
             return
         }
 
@@ -482,18 +627,19 @@ class AppViewModel(
             state.copy(
                 receiverState = recomputeReceiverState(
                     state,
-                    state.receiverState.copy(retryScheduled = true),
+                    state.receiverState.copy(
+                        isScanning = false,
+                        retryScheduled = true,
+                    ),
                 ),
             )
         }
 
         receiverRetryJob = viewModelScope.launch {
-            AppLogger.d(LogTag.BLE_SCAN, "Scheduling BLE scan retry in ${RECEIVER_RETRY_DELAY_MS}ms")
             delay(RECEIVER_RETRY_DELAY_MS)
             receiverRetryJob = null
 
-            val currentState = _uiState.value
-            if (!receiverAutoRestartAllowed || !isReceiverRuntimeReady(currentState)) {
+            if (!shouldScheduleReceiverRetry()) {
                 _uiState.update { state ->
                     state.copy(
                         receiverState = recomputeReceiverState(
@@ -509,16 +655,11 @@ class AppViewModel(
                 state.copy(
                     receiverState = recomputeReceiverState(
                         state,
-                        state.receiverState.copy(
-                            isScanning = true,
-                            retryScheduled = false,
-                            errorText = null,
-                        ),
+                        state.receiverState.copy(retryScheduled = false),
                     ),
                 )
             }
-
-            beaconScannerController.startScanning(::handleScanEvent)
+            onStartReceiverClick()
         }
     }
 
@@ -526,13 +667,15 @@ class AppViewModel(
         val state = _uiState.value
         return receiverAutoRestartAllowed &&
             state.selectedMode == AppMode.RECEIVER &&
-            isReceiverRuntimeReady(state)
+            isReceiverRuntimeReady(state) &&
+            !state.receiverState.isScanning
     }
 
     private fun stopReceiverScanning(errorText: String?) {
         receiverAutoRestartAllowed = false
         cancelReceiverRetry()
         beaconScannerController.stopScanning()
+        rssiStabilizer.reset()
 
         _uiState.update { state ->
             state.copy(
@@ -542,6 +685,9 @@ class AppViewModel(
                         isScanning = false,
                         retryScheduled = false,
                         errorText = errorText,
+                        stabilizationProgress = 0,
+                        lastGateDecisionText = null,
+                        lastEligibleForAnnouncement = null,
                     ),
                 ),
             )
@@ -563,72 +709,87 @@ class AppViewModel(
         transform: (BeaconScreenState) -> BeaconScreenState,
     ) {
         _uiState.update { currentState ->
-            val updatedBeaconState = transform(currentState.beaconState)
+            val transformedState = transform(currentState.beaconState)
             currentState.copy(
                 beaconState = recomputeBeaconState(
                     currentState,
-                    updatedBeaconState,
+                    transformedState,
                 ),
             )
         }
-        persistCurrentBeaconConfig(isActive = false)
+
+        val shouldPersist = BeaconConfigValidator.isValid(
+            currentBeaconConfig(isActive = _uiState.value.beaconState.isAdvertising),
+        )
+        if (shouldPersist) {
+            persistCurrentBeaconConfig(isActive = _uiState.value.beaconState.isAdvertising)
+        }
     }
 
     private fun createInitialUiState(): AppUiState {
-        val initialPointType = MessageCatalog.supportedPointTypes().first()
-        val availableMessages = MessageCatalog.definitionsFor(initialPointType)
-        val initialMessage = availableMessages.first()
         val initialBeaconState = BeaconScreenState(
             beaconId = UUID.randomUUID().toString(),
-            labelInput = "",
-            selectedPointType = initialPointType,
-            selectedPriority = Priority.MEDIUM,
-            selectedMessageCode = initialMessage.messageCode,
-            availableMessages = availableMessages,
             advertiserSupported = beaconAdvertiserController.isSupported(),
         )
         val initialReceiverState = ReceiverScreenState(
             scannerSupported = beaconScannerController.isSupported(),
+            requiredStabilizationCount = rssiStabilizer.requiredConsecutiveReads,
+            rssiThreshold = rssiStabilizer.rssiThresholdDbm,
         )
-
-        return AppUiState(
+        val initialState = AppUiState(
             beaconState = initialBeaconState,
             receiverState = initialReceiverState,
+        )
+
+        return initialState.copy(
+            beaconState = recomputeBeaconState(initialState, initialBeaconState),
+            receiverState = recomputeReceiverState(initialState, initialReceiverState),
         )
     }
 
     private fun recomputeBeaconState(
-        appState: AppUiState,
+        state: AppUiState,
         beaconState: BeaconScreenState,
         allowReadyStatus: Boolean = true,
     ): BeaconScreenState {
         val advertiserSupported = beaconAdvertiserController.isSupported()
-        val ready = appState.permissionUiState.status == PermissionStatus.GRANTED &&
-            appState.bluetoothStatus == BluetoothStatus.READY &&
+        val validConfig = BeaconConfigValidator.isValid(
+            BeaconConfig(
+                beaconId = beaconState.beaconId,
+                label = beaconState.labelInput.trim(),
+                pointType = beaconState.selectedPointType,
+                priority = beaconState.selectedPriority,
+                messageCode = beaconState.selectedMessageCode,
+                isActive = beaconState.isAdvertising,
+                lastUpdatedAt = System.currentTimeMillis(),
+            ),
+        )
+        val isReady = state.permissionUiState.status == PermissionStatus.GRANTED &&
+            state.bluetoothStatus == BluetoothStatus.READY &&
             advertiserSupported &&
-            BeaconConfigValidator.isValid(currentBeaconConfig(beaconState = beaconState))
+            validConfig
 
         val statusText = when {
             beaconState.errorText != null -> "Error"
             beaconState.isAdvertising -> "Advertising"
-            ready && allowReadyStatus -> "Ready"
+            isReady && allowReadyStatus -> "Ready"
             else -> "Idle"
         }
 
         return beaconState.copy(
-            isReady = ready,
             advertiserSupported = advertiserSupported,
+            isReady = isReady,
             statusText = statusText,
         )
     }
 
     private fun recomputeReceiverState(
-        appState: AppUiState,
+        state: AppUiState,
         receiverState: ReceiverScreenState,
     ): ReceiverScreenState {
         val scannerSupported = beaconScannerController.isSupported()
-        val ready = appState.permissionUiState.status == PermissionStatus.GRANTED &&
-            appState.bluetoothStatus == BluetoothStatus.READY &&
+        val isReady = state.permissionUiState.status == PermissionStatus.GRANTED &&
+            state.bluetoothStatus == BluetoothStatus.READY &&
             scannerSupported
 
         val statusText = when {
@@ -639,15 +800,13 @@ class AppViewModel(
 
         return receiverState.copy(
             scannerSupported = scannerSupported,
-            isReady = ready,
+            isReady = isReady,
             statusText = statusText,
         )
     }
 
-    private fun currentBeaconConfig(
-        beaconState: BeaconScreenState = _uiState.value.beaconState,
-        isActive: Boolean = beaconState.isAdvertising,
-    ): BeaconConfig {
+    private fun currentBeaconConfig(isActive: Boolean): BeaconConfig {
+        val beaconState = _uiState.value.beaconState
         return BeaconConfig(
             beaconId = beaconState.beaconId,
             label = beaconState.labelInput.trim(),
@@ -671,12 +830,17 @@ class AppViewModel(
     }
 
     private fun ByteArray.toHexString(): String {
-        return joinToString(separator = " ") { byte ->
-            "%02X".format(byte)
+        return joinToString(separator = "") { byte ->
+            "%02X".format(byte.toInt() and 0xFF)
         }
+    }
+
+    private fun formatRemainingCooldownSeconds(remainingMs: Long): Long {
+        return (remainingMs + 999L) / 1_000L
     }
 
     companion object {
         private const val RECEIVER_RETRY_DELAY_MS = 3_000L
+        private const val UNKNOWN_LOCAL_MESSAGE_TEXT = "Nepoznata lokalna poruka za ovaj beacon."
     }
 }

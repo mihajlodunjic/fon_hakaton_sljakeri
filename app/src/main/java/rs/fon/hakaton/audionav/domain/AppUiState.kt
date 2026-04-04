@@ -59,6 +59,13 @@ data class ReceiverScreenState(
     val lastDecodedText: String? = null,
     val lastDetectedAt: Long? = null,
     val lastRssi: Int? = null,
+    val stabilizationProgress: Int = 0,
+    val requiredStabilizationCount: Int = 3,
+    val rssiThreshold: Int = -75,
+    val lastGateDecisionText: String? = null,
+    val lastEligibleForAnnouncement: Boolean? = null,
+    val lastAnnouncementAt: Long? = null,
+    val recentEvents: List<DetectedBeaconEvent> = emptyList(),
 )
 
 data class AppUiState(

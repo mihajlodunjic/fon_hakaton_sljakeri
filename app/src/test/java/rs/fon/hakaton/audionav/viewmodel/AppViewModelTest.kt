@@ -17,13 +17,19 @@ import rs.fon.hakaton.audionav.ble.BeaconScannerController
 import rs.fon.hakaton.audionav.domain.AppMode
 import rs.fon.hakaton.audionav.domain.BeaconConfig
 import rs.fon.hakaton.audionav.domain.BluetoothStatus
+import rs.fon.hakaton.audionav.domain.CooldownEntry
 import rs.fon.hakaton.audionav.domain.DecodedBeaconPayload
+import rs.fon.hakaton.audionav.domain.DetectedBeaconEvent
 import rs.fon.hakaton.audionav.domain.MessageCatalog
 import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.domain.PermissionUiState
 import rs.fon.hakaton.audionav.domain.PointType
 import rs.fon.hakaton.audionav.domain.Priority
+import rs.fon.hakaton.audionav.domain.RssiStabilizer
 import rs.fon.hakaton.audionav.storage.BeaconConfigStorage
+import rs.fon.hakaton.audionav.storage.CooldownRepository
+import rs.fon.hakaton.audionav.storage.ReceiverRuntimeSnapshot
+import rs.fon.hakaton.audionav.storage.ReceiverRuntimeStorage
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppViewModelTest {
@@ -32,8 +38,9 @@ class AppViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     @Test
-    fun `view model initializes beacon draft with valid uuid and default catalog`() {
+    fun `view model initializes beacon draft with valid uuid and default catalog`() = runTest {
         val viewModel = createViewModel()
+        advanceUntilIdle()
 
         val state = viewModel.uiState.value.beaconState
         val uuid = UUID.fromString(state.beaconId)
@@ -194,7 +201,7 @@ class AppViewModelTest {
     }
 
     @Test
-    fun `receiver valid beacon detection updates state with decoded text`() = runTest {
+    fun `receiver needs three valid reads before stable event is recorded`() = runTest {
         val scanner = FakeBeaconScannerController()
         val viewModel = createViewModel(scanner = scanner)
         viewModel.onSystemStatusChanged(
@@ -204,33 +211,28 @@ class AppViewModelTest {
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
-        scanner.emit(
-            BeaconScanEvent.BeaconDetected(
-                payload = DecodedBeaconPayload(
-                    protocolVersion = 1,
-                    beaconId = "123e4567-e89b-12d3-a456-426614174000",
-                    pointType = PointType.CROSSWALK,
-                    priority = Priority.MEDIUM,
-                    messageCode = 1,
-                ),
-                rssi = -62,
-                detectedAt = 123456L,
-            ),
-        )
+        scanner.emit(beaconDetected(rssi = -62, detectedAt = 100L))
+        advanceUntilIdle()
+        scanner.emit(beaconDetected(rssi = -61, detectedAt = 200L))
         advanceUntilIdle()
 
-        val state = viewModel.uiState.value.receiverState
-        assertEquals("123e4567-e89b-12d3-a456-426614174000", state.lastDetectedBeaconId)
-        assertEquals(PointType.CROSSWALK, state.lastDetectedPointType)
-        assertEquals(Priority.MEDIUM, state.lastDetectedPriority)
-        assertEquals(1.toShort(), state.lastDetectedMessageCode)
-        assertEquals(-62, state.lastRssi)
-        assertEquals(123456L, state.lastDetectedAt)
+        var state = viewModel.uiState.value.receiverState
+        assertEquals(2, state.stabilizationProgress)
+        assertEquals(0, state.recentEvents.size)
+        assertEquals(null, state.lastEligibleForAnnouncement)
+
+        scanner.emit(beaconDetected(rssi = -60, detectedAt = 300L))
+        advanceUntilIdle()
+
+        state = viewModel.uiState.value.receiverState
+        assertEquals(1, state.recentEvents.size)
+        assertEquals(true, state.lastEligibleForAnnouncement)
+        assertEquals("Najava dozvoljena.", state.lastGateDecisionText)
         assertEquals("Pesacki prelaz ispred vas.", state.lastDecodedText)
     }
 
     @Test
-    fun `receiver valid payload with unknown message code shows fallback text`() = runTest {
+    fun `receiver valid payload with unknown message code shows fallback text after stabilization`() = runTest {
         val scanner = FakeBeaconScannerController()
         val viewModel = createViewModel(scanner = scanner)
         viewModel.onSystemStatusChanged(
@@ -240,25 +242,59 @@ class AppViewModelTest {
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
-        scanner.emit(
-            BeaconScanEvent.BeaconDetected(
-                payload = DecodedBeaconPayload(
-                    protocolVersion = 1,
-                    beaconId = "123e4567-e89b-12d3-a456-426614174000",
-                    pointType = PointType.CROSSWALK,
-                    priority = Priority.MEDIUM,
-                    messageCode = 99,
+        repeat(3) { index ->
+            scanner.emit(
+                BeaconScanEvent.BeaconDetected(
+                    payload = DecodedBeaconPayload(
+                        protocolVersion = 1,
+                        beaconId = "123e4567-e89b-12d3-a456-426614174000",
+                        pointType = PointType.CROSSWALK,
+                        priority = Priority.MEDIUM,
+                        messageCode = 99,
+                    ),
+                    rssi = -58,
+                    detectedAt = 500L + index,
                 ),
-                rssi = -58,
-                detectedAt = 500L,
-            ),
-        )
-        advanceUntilIdle()
+            )
+            advanceUntilIdle()
+        }
 
         assertEquals(
             "Nepoznata lokalna poruka za ovaj beacon.",
             viewModel.uiState.value.receiverState.lastDecodedText,
         )
+        assertEquals(1, viewModel.uiState.value.receiverState.recentEvents.size)
+    }
+
+    @Test
+    fun `stable event inside cooldown is recorded but blocked`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val viewModel = createViewModel(scanner = scanner)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(beaconDetected(rssi = -60, detectedAt = 1_000L + index))
+            advanceUntilIdle()
+        }
+
+        scanner.emit(beaconDetected(rssi = -90, detectedAt = 2_000L))
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(beaconDetected(rssi = -60, detectedAt = 2_100L + index))
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(2, state.recentEvents.size)
+        assertEquals(false, state.recentEvents.first().wasAnnounced)
+        assertEquals(false, state.lastEligibleForAnnouncement)
+        assertTrue(state.lastGateDecisionText?.contains("cooldown-u") == true)
     }
 
     @Test
@@ -344,15 +380,70 @@ class AppViewModelTest {
         assertEquals(1, scanner.stopCalls)
     }
 
+    @Test
+    fun `view model loads receiver runtime snapshot on startup`() = runTest {
+        val runtimeStorage = FakeReceiverRuntimeStorage(
+            snapshot = ReceiverRuntimeSnapshot(
+                cooldownEntries = listOf(
+                    CooldownEntry(
+                        beaconId = "123e4567-e89b-12d3-a456-426614174000",
+                        messageCode = 1,
+                        lastTriggeredAt = 1_000L,
+                    ),
+                ),
+                recentEvents = listOf(
+                    DetectedBeaconEvent(
+                        beaconId = "123e4567-e89b-12d3-a456-426614174000",
+                        detectedAt = 1_500L,
+                        rssi = -60,
+                        pointType = PointType.CROSSWALK,
+                        priority = Priority.MEDIUM,
+                        messageCode = 1,
+                        wasAnnounced = true,
+                    ),
+                ),
+            ),
+        )
+
+        val viewModel = createViewModel(runtimeStorage = runtimeStorage)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(1, state.recentEvents.size)
+        assertEquals(1_500L, state.lastAnnouncementAt)
+    }
+
     private fun createViewModel(
         storage: FakeBeaconConfigStorage = FakeBeaconConfigStorage(),
         advertiser: FakeBeaconAdvertiserController = FakeBeaconAdvertiserController(),
         scanner: FakeBeaconScannerController = FakeBeaconScannerController(),
+        runtimeStorage: FakeReceiverRuntimeStorage = FakeReceiverRuntimeStorage(),
     ): AppViewModel {
         return AppViewModel(
             beaconConfigStorage = storage,
             beaconAdvertiserController = advertiser,
             beaconScannerController = scanner,
+            cooldownRepository = CooldownRepository(runtimeStorage),
+            rssiStabilizer = RssiStabilizer(),
+        )
+    }
+
+    private fun beaconDetected(
+        rssi: Int,
+        detectedAt: Long,
+        messageCode: Short = 1,
+        pointType: PointType = PointType.CROSSWALK,
+    ): BeaconScanEvent.BeaconDetected {
+        return BeaconScanEvent.BeaconDetected(
+            payload = DecodedBeaconPayload(
+                protocolVersion = 1,
+                beaconId = "123e4567-e89b-12d3-a456-426614174000",
+                pointType = pointType,
+                priority = Priority.MEDIUM,
+                messageCode = messageCode,
+            ),
+            rssi = rssi,
+            detectedAt = detectedAt,
         )
     }
 }
@@ -369,6 +460,17 @@ private class FakeBeaconConfigStorage(
 
     override suspend fun clearActiveFlag() {
         storedConfig = storedConfig?.copy(isActive = false)
+    }
+}
+
+private class FakeReceiverRuntimeStorage(
+    var snapshot: ReceiverRuntimeSnapshot = ReceiverRuntimeSnapshot(),
+) : ReceiverRuntimeStorage {
+
+    override suspend fun load(): ReceiverRuntimeSnapshot = snapshot
+
+    override suspend fun save(snapshot: ReceiverRuntimeSnapshot) {
+        this.snapshot = snapshot
     }
 }
 
