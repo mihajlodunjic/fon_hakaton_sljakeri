@@ -540,7 +540,16 @@ class AppViewModel(
                 }
             }
 
-            is BeaconScanEvent.BeaconDetected -> handleDetectedBeacon(event)
+            is BeaconScanEvent.BeaconDetected -> {
+                if (!isReceiverSessionActive()) {
+                    AppLogger.d(
+                        LogTag.BLE_SCAN,
+                        "Ignoring beacon event after receiver stop for beaconId=${event.payload.beaconId}",
+                    )
+                    return
+                }
+                handleDetectedBeacon(event)
+            }
 
             is BeaconScanEvent.Failure -> {
                 AppLogger.e(
@@ -585,6 +594,13 @@ class AppViewModel(
     }
 
     private fun handleDetectedBeacon(event: BeaconScanEvent.BeaconDetected) {
+        if (!isReceiverSessionActive()) {
+            AppLogger.d(
+                LogTag.BLE_SCAN,
+                "Ignoring detected beacon because receiver session is not active: beaconId=${event.payload.beaconId}",
+            )
+            return
+        }
         val message = MessageCatalog.resolve(
             pointType = event.payload.pointType,
             messageCode = event.payload.messageCode,
@@ -1429,6 +1445,7 @@ class AppViewModel(
         cancelReceiverRetry()
         cancelAnnouncementGap()
         beaconScannerController.stopScanning()
+        ttsAnnouncer.stop()
         announcementArbiter.clear()
         behindPassTracker.reset()
         rssiStabilizer.reset()
@@ -1472,6 +1489,13 @@ class AppViewModel(
         return state.permissionUiState.status == PermissionStatus.GRANTED &&
             state.bluetoothStatus == BluetoothStatus.READY &&
             state.receiverState.scannerSupported
+    }
+
+    private fun isReceiverSessionActive(): Boolean {
+        val state = _uiState.value
+        return state.selectedMode == AppMode.RECEIVER &&
+            receiverAutoRestartAllowed &&
+            state.receiverState.isScanning
     }
 
     private fun updateBeaconDraft(

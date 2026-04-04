@@ -127,6 +127,14 @@ class AndroidTtsAnnouncer(
         }
     }
 
+    override fun stop() {
+        runCatching {
+            textToSpeech?.stop()
+        }.onFailure { throwable ->
+            AppLogger.e(LogTag.TTS, "TextToSpeech stop failed: ${throwable.message}")
+        }
+    }
+
     override fun shutdown() {
         runCatching {
             textToSpeech?.stop()

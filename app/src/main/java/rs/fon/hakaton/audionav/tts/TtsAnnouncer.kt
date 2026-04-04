@@ -11,6 +11,8 @@ interface TtsAnnouncer {
         utteranceId: String,
     ): TtsSpeakResult
 
+    fun stop()
+
     fun shutdown()
 }
 

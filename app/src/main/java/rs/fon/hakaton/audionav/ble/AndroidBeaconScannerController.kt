@@ -42,20 +42,21 @@ class AndroidBeaconScannerController(
 
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                handleScanResult(result, onEvent)
+                handleScanResult(result)
             }
 
             override fun onBatchScanResults(results: MutableList<ScanResult>) {
                 results.forEach { result ->
-                    handleScanResult(result, onEvent)
+                    handleScanResult(result)
                 }
             }
 
             override fun onScanFailed(errorCode: Int) {
                 AppLogger.e(LogTag.BLE_SCAN, "BLE scan failed with code=$errorCode")
                 activeCallback = null
+                val eventCallback = activeEventCallback
                 activeEventCallback = null
-                onEvent(
+                eventCallback?.invoke(
                     BeaconScanEvent.Failure(
                         code = errorCode,
                         message = mapScanFailure(errorCode),
@@ -124,15 +125,15 @@ class AndroidBeaconScannerController(
 
     private fun handleScanResult(
         result: ScanResult,
-        onEvent: (BeaconScanEvent) -> Unit,
     ) {
+        val eventCallback = activeEventCallback ?: return
         val payload = result.scanRecord
             ?.getManufacturerSpecificData(BeaconProtocol.MANUFACTURER_ID)
             ?: return
 
         when (val decodedResult = BeaconPayloadCodec.decode(payload)) {
             is PayloadDecodeResult.Success -> {
-                onEvent(
+                eventCallback(
                     BeaconScanEvent.BeaconDetected(
                         payload = decodedResult.payload,
                         rssi = result.rssi,

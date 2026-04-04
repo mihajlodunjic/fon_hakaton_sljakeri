@@ -214,6 +214,75 @@ class AppViewModelTest {
     }
 
     @Test
+    fun `receiver stop ignores late scan callbacks and stops active tts`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(beaconDetected(rssi = -60, detectedAt = 100L + index))
+            advanceUntilIdle()
+        }
+
+        val stateBeforeStop = viewModel.uiState.value.receiverState
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals(102L, stateBeforeStop.lastDetectedAt)
+        assertEquals(1, stateBeforeStop.recentEvents.size)
+
+        viewModel.onStopClick(AppMode.RECEIVER)
+        advanceUntilIdle()
+
+        scanner.emitLate(beaconDetected(rssi = -55, detectedAt = 400L))
+        advanceUntilIdle()
+
+        val stateAfterLateEvent = viewModel.uiState.value.receiverState
+        assertEquals(1, scanner.stopCalls)
+        assertEquals(1, ttsAnnouncer.stopCalls)
+        assertEquals(false, stateAfterLateEvent.isScanning)
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals(102L, stateAfterLateEvent.lastDetectedAt)
+        assertEquals(1, stateAfterLateEvent.recentEvents.size)
+    }
+
+    @Test
+    fun `receiver can restart scanning after stop`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        viewModel.onStopClick(AppMode.RECEIVER)
+        advanceUntilIdle()
+
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(beaconDetected(rssi = -60, detectedAt = 500L + index))
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(2, scanner.startCalls)
+        assertEquals(1, scanner.stopCalls)
+        assertEquals(1, ttsAnnouncer.stopCalls)
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals(true, state.isScanning)
+        assertEquals(1, state.recentEvents.size)
+    }
+
+    @Test
     fun `receiver needs three valid reads before stable event is recorded`() = runTest {
         val scanner = FakeBeaconScannerController()
         val ttsAnnouncer = FakeTtsAnnouncer()
@@ -933,6 +1002,7 @@ private class FakeTtsAnnouncer(
 ) : TtsAnnouncer {
 
     var announceCalls: Int = 0
+    var stopCalls: Int = 0
     var shutdownCalls: Int = 0
     private var statusCallback: ((TtsStatus) -> Unit)? = null
     private var playbackCallback: ((TtsPlaybackEvent) -> Unit)? = null
@@ -956,6 +1026,10 @@ private class FakeTtsAnnouncer(
         announcedTexts += text
         announcedUtteranceIds += utteranceId
         return announceResult
+    }
+
+    override fun stop() {
+        stopCalls += 1
     }
 
     override fun shutdown() {
@@ -1008,12 +1082,14 @@ private class FakeBeaconScannerController(
     var startCalls: Int = 0
     var stopCalls: Int = 0
     private var callback: ((BeaconScanEvent) -> Unit)? = null
+    private var lastCallback: ((BeaconScanEvent) -> Unit)? = null
 
     override fun isSupported(): Boolean = supported
 
     override fun startScanning(onEvent: (BeaconScanEvent) -> Unit) {
         startCalls += 1
         callback = onEvent
+        lastCallback = onEvent
         onEvent(BeaconScanEvent.Started)
     }
 
@@ -1024,6 +1100,10 @@ private class FakeBeaconScannerController(
 
     fun emit(event: BeaconScanEvent) {
         callback?.invoke(event)
+    }
+
+    fun emitLate(event: BeaconScanEvent) {
+        lastCallback?.invoke(event)
     }
 }
 
