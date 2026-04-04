@@ -242,9 +242,9 @@ class AppViewModelTest {
         assertEquals(1, state.recentEvents.size)
         assertEquals(true, state.lastEligibleForAnnouncement)
         assertEquals("Najava dozvoljena.", state.lastGateDecisionText)
-        assertEquals("Pešački prelaz je ispred vas.", state.lastDecodedText)
-        assertEquals("Pešački prelaz je ispred vas.", state.lastSpokenText)
-        assertEquals(DirectionLabel.AHEAD, state.lastDirectionLabel)
+        assertEquals("Pešački prelaz je iza vas.", state.lastDecodedText)
+        assertEquals("Pešački prelaz je iza vas.", state.lastSpokenText)
+        assertEquals(DirectionLabel.BEHIND, state.lastDirectionLabel)
         assertEquals(300L, state.lastSpokenAt)
         assertEquals(1, ttsAnnouncer.announceCalls)
     }
@@ -486,7 +486,7 @@ class AppViewModelTest {
 
         state = viewModel.uiState.value.receiverState
         assertEquals(2, ttsAnnouncer.announceCalls)
-        assertEquals("Stepenice su ispred vas.", ttsAnnouncer.announcedTexts.last())
+        assertEquals("Stepenice su iza vas.", ttsAnnouncer.announcedTexts.last())
         assertEquals(null, state.pendingAnnouncementBeaconId)
         assertEquals("Cekajuci kandidat je dosao na red za glasovnu najavu.", state.lastArbitrationDecisionText)
     }

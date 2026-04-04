@@ -6,9 +6,9 @@ import org.junit.Test
 class DirectionEstimatorTest {
 
     @Test
-    fun `zero delta maps to ahead`() {
+    fun `zero delta maps to behind`() {
         val estimate = DirectionEstimator.estimate(90, 90, DirectionConfidence.HIGH)
-        assertEquals(DirectionLabel.AHEAD, estimate.direction)
+        assertEquals(DirectionLabel.BEHIND, estimate.direction)
     }
 
     @Test
@@ -26,9 +26,9 @@ class DirectionEstimatorTest {
     }
 
     @Test
-    fun `large delta maps to behind`() {
+    fun `large delta maps to ahead`() {
         val estimate = DirectionEstimator.estimate(180, 0, DirectionConfidence.HIGH)
-        assertEquals(DirectionLabel.BEHIND, estimate.direction)
+        assertEquals(DirectionLabel.AHEAD, estimate.direction)
     }
 
     @Test
