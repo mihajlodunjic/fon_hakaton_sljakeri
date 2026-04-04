@@ -92,6 +92,9 @@ data class ReceiverScreenState(
     val lastRelativeAngleDegrees: Int? = null,
     val lastDirectionLabel: DirectionLabel = DirectionLabel.UNKNOWN,
     val directionFallbackReason: String? = null,
+    val behindPassStatusText: String? = null,
+    val behindPassTrackingBeaconId: String? = null,
+    val behindPassSampleCount: Int = 0,
 )
 
 data class AppUiState(

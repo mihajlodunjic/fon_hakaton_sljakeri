@@ -10,6 +10,7 @@ data class AnnouncementCandidate(
     val messageDefinition: MessageDefinition,
     val detectedAt: Long,
     val smoothedRssi: Int,
+    val passConfirmedBehind: Boolean = false,
 )
 
 data class ActiveAnnouncement(
@@ -163,6 +164,7 @@ class AnnouncementArbiter(
             protocolVersion = newCandidate.protocolVersion,
             azimuthDegrees = newCandidate.azimuthDegrees,
             messageDefinition = newCandidate.messageDefinition,
+            passConfirmedBehind = currentPending.passConfirmedBehind || newCandidate.passConfirmedBehind,
         )
     }
 

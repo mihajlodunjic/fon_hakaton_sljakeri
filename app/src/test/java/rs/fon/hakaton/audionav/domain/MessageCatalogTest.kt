@@ -11,7 +11,17 @@ class MessageCatalogTest {
     fun `resolve returns Serbian TTS text for crosswalk code 1`() {
         val definition = MessageCatalog.resolve(PointType.CROSSWALK, 1)
 
-        assertEquals("Pešački prelaz u blizini.", definition?.genericTtsText)
+        assertEquals("Pe\u0161a\u010dki prelaz u blizini.", definition?.genericTtsText)
+        assertEquals(BehindSpeechPolicy.PASS_CONFIRMED_MESSAGE, definition?.behindSpeechPolicy)
+    }
+
+    @Test
+    fun `resolve returns traffic light definition for code 6`() {
+        val definition = MessageCatalog.resolve(PointType.TRAFFIC_LIGHT, 6)
+
+        assertEquals("Semafor u blizini.", definition?.genericTtsText)
+        assertEquals(DirectionPromptStyle.TRAFFIC_LIGHT, definition?.directionPromptStyle)
+        assertEquals(BehindSpeechPolicy.PASS_CONFIRMED_MESSAGE, definition?.behindSpeechPolicy)
     }
 
     @Test

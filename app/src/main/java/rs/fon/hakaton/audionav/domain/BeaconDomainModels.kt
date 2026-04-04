@@ -4,15 +4,15 @@ enum class PointType(
     val code: Int,
     val displayName: String,
 ) {
-    CROSSWALK(1, "Pešački prelaz"),
+    CROSSWALK(1, "Pe\u0161a\u010dki prelaz"),
     TRAFFIC_LIGHT(2, "Semafor"),
     STAIRS(3, "Stepenice"),
     ENTRANCE(4, "Ulaz"),
-    BUS_STOP(5, "Autobusko stajalište"),
+    BUS_STOP(5, "Autobusko stajali\u0161te"),
     POLE(6, "Stub"),
     ELEVATOR(7, "Lift"),
     WORKS(8, "Radovi"),
-    COUNTER(9, "Šalter"),
+    COUNTER(9, "\u0160alter"),
     DOOR(10, "Vrata"),
     OBSTACLE(11, "Prepreka"),
     OTHER(12, "Ostalo");
@@ -29,7 +29,7 @@ enum class Priority(
     LOW(1, "Nizak"),
     MEDIUM(2, "Srednji"),
     HIGH(3, "Visok"),
-    CRITICAL(4, "Kritičan");
+    CRITICAL(4, "Kriti\u010dan");
 
     companion object {
         fun fromCode(code: Int): Priority? = entries.firstOrNull { it.code == code }
@@ -78,7 +78,20 @@ data class MessageDefinition(
     val subjectSingular: String,
     val subjectPlural: Boolean,
     val genericTtsText: String,
+    val directionPromptStyle: DirectionPromptStyle,
+    val behindSpeechPolicy: BehindSpeechPolicy,
 )
+
+enum class DirectionPromptStyle {
+    DEFAULT,
+    CROSSWALK,
+    TRAFFIC_LIGHT,
+}
+
+enum class BehindSpeechPolicy {
+    IMMEDIATE_DIRECTIONAL,
+    PASS_CONFIRMED_MESSAGE,
+}
 
 data class DecodedBeaconPayload(
     val protocolVersion: Int,

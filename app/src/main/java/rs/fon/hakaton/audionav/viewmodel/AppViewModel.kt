@@ -22,6 +22,9 @@ import rs.fon.hakaton.audionav.domain.AnnouncementArbitrationResult
 import rs.fon.hakaton.audionav.domain.AnnouncementCandidate
 import rs.fon.hakaton.audionav.domain.AppMode
 import rs.fon.hakaton.audionav.domain.AppUiState
+import rs.fon.hakaton.audionav.domain.BehindPassResult
+import rs.fon.hakaton.audionav.domain.BehindPassTracker
+import rs.fon.hakaton.audionav.domain.BehindSpeechPolicy
 import rs.fon.hakaton.audionav.domain.DirectionConfidence
 import rs.fon.hakaton.audionav.domain.DirectionEstimator
 import rs.fon.hakaton.audionav.domain.DirectionLabel
@@ -62,6 +65,7 @@ class AppViewModel(
     private val headingSensorController: HeadingSensorController,
     private val ttsAnnouncer: TtsAnnouncer,
     private val announcementArbiter: AnnouncementArbiter = AnnouncementArbiter(),
+    private val behindPassTracker: BehindPassTracker = BehindPassTracker(),
     private val timeProvider: () -> Long = { System.currentTimeMillis() },
 ) : ViewModel() {
 
@@ -428,6 +432,7 @@ class AppViewModel(
         cancelReceiverRetry()
         cancelAnnouncementGap()
         announcementArbiter.clear()
+        behindPassTracker.reset()
         rssiStabilizer.reset()
 
         val errorMessage = when {
@@ -635,6 +640,14 @@ class AppViewModel(
                         ),
                     )
                 }
+
+                if (stabilizationResult.hasStableWindow && stabilizationResult.smoothedRssi != null) {
+                    handleBehindPassTrackingWindow(
+                        payload = event.payload,
+                        detectedAt = event.detectedAt,
+                        smoothedRssi = stabilizationResult.smoothedRssi,
+                    )
+                }
             }
 
             is RssiStabilizationResult.Rejected -> {
@@ -668,6 +681,11 @@ class AppViewModel(
                         ),
                     )
                 }
+
+                clearBehindPassTracking(
+                    beaconId = event.payload.beaconId,
+                    messageCode = event.payload.messageCode,
+                )
             }
 
             is RssiStabilizationResult.Stable -> {
@@ -684,72 +702,187 @@ class AppViewModel(
         result: RssiStabilizationResult.Stable,
     ) {
         viewModelScope.launch {
-            val messageDefinition = MessageCatalog.resolve(
-                pointType = result.payload.pointType,
-                messageCode = result.payload.messageCode,
-            )
-            val cooldownResult = cooldownRepository.check(
-                beaconId = result.payload.beaconId,
-                messageCode = result.payload.messageCode,
-                now = result.detectedAt,
-            )
-            val gateText = gateDecisionText(cooldownResult)
-            if (cooldownResult.isBlocked) {
-                AppLogger.d(
-                    LogTag.RSSI,
-                    "Gate blocked beaconId=${result.payload.beaconId}, messageCode=${result.payload.messageCode}, remainingMs=${cooldownResult.remainingMs}",
-                )
-                persistReceiverDecision(
-                    payload = result.payload,
-                    detectedAt = result.detectedAt,
-                    rssi = result.smoothedRssi,
-                    wasAnnounced = false,
-                    gateText = gateText,
-                    arbitrationText = "Kandidat je odbacen zbog cooldown-a.",
-                )
-                return@launch
-            }
-
-            AppLogger.d(
-                LogTag.RSSI,
-                "Gate allowed beaconId=${result.payload.beaconId}, messageCode=${result.payload.messageCode}, detectedAt=${result.detectedAt}",
-            )
-
-            if (messageDefinition == null) {
-                AppLogger.w(
-                    LogTag.TTS,
-                    "Skipping TTS for beaconId=${result.payload.beaconId}, messageCode=${result.payload.messageCode}: no local message definition",
-                )
-                persistReceiverDecision(
-                    payload = result.payload,
-                    detectedAt = result.detectedAt,
-                    rssi = result.smoothedRssi,
-                    wasAnnounced = false,
-                    gateText = gateText,
-                    arbitrationText = "Nema lokalne TTS poruke za ovaj beacon.",
-                    ttsError = "Nema lokalne TTS poruke za ovaj beacon.",
-                )
-                return@launch
-            }
-
-            val candidate = AnnouncementCandidate(
-                beaconId = result.payload.beaconId,
-                messageCode = result.payload.messageCode,
-                pointType = result.payload.pointType,
-                priority = result.payload.priority,
-                protocolVersion = result.payload.protocolVersion,
-                azimuthDegrees = result.payload.azimuthDegrees,
-                messageDefinition = messageDefinition,
+            processStableCandidate(
+                payload = result.payload,
                 detectedAt = result.detectedAt,
                 smoothedRssi = result.smoothedRssi,
+                continuousBehindTrackingOnly = false,
             )
+        }
+    }
 
-            handleArbitrationDecision(
-                decision = announcementArbiter.submitCandidate(
-                    candidate = candidate,
-                    canSpeakImmediately = canSpeakImmediately(result.detectedAt),
-                ),
+    private fun handleBehindPassTrackingWindow(
+        payload: rs.fon.hakaton.audionav.domain.DecodedBeaconPayload,
+        detectedAt: Long,
+        smoothedRssi: Int,
+    ) {
+        viewModelScope.launch {
+            processStableCandidate(
+                payload = payload,
+                detectedAt = detectedAt,
+                smoothedRssi = smoothedRssi,
+                continuousBehindTrackingOnly = true,
+            )
+        }
+    }
+
+    private suspend fun processStableCandidate(
+        payload: rs.fon.hakaton.audionav.domain.DecodedBeaconPayload,
+        detectedAt: Long,
+        smoothedRssi: Int,
+        continuousBehindTrackingOnly: Boolean,
+    ) {
+        val messageDefinition = MessageCatalog.resolve(
+            pointType = payload.pointType,
+            messageCode = payload.messageCode,
+        )
+
+        if (messageDefinition == null) {
+            if (continuousBehindTrackingOnly) {
+                return
+            }
+
+            AppLogger.w(
+                LogTag.TTS,
+                "Skipping TTS for beaconId=${payload.beaconId}, messageCode=${payload.messageCode}: no local message definition",
+            )
+            persistReceiverDecision(
+                payload = payload,
+                detectedAt = detectedAt,
+                rssi = smoothedRssi,
+                wasAnnounced = false,
+                gateText = "Najava dozvoljena.",
+                arbitrationText = "Nema lokalne TTS poruke za ovaj beacon.",
+                ttsError = "Nema lokalne TTS poruke za ovaj beacon.",
+            )
+            return
+        }
+
+        var candidate = AnnouncementCandidate(
+            beaconId = payload.beaconId,
+            messageCode = payload.messageCode,
+            pointType = payload.pointType,
+            priority = payload.priority,
+            protocolVersion = payload.protocolVersion,
+            azimuthDegrees = payload.azimuthDegrees,
+            messageDefinition = messageDefinition,
+            detectedAt = detectedAt,
+            smoothedRssi = smoothedRssi,
+        )
+
+        val directionResolution = resolveDirectionResolution(candidate)
+        val shouldTrackBehindPass = messageDefinition.behindSpeechPolicy ==
+            BehindSpeechPolicy.PASS_CONFIRMED_MESSAGE &&
+            directionResolution.estimate.direction == DirectionLabel.BEHIND
+
+        if (shouldTrackBehindPass) {
+            when (
+                val behindPassResult = behindPassTracker.observe(
+                    beaconId = candidate.beaconId,
+                    messageCode = candidate.messageCode,
+                    smoothedRssi = candidate.smoothedRssi,
+                    detectedAt = candidate.detectedAt,
+                )
+            ) {
+                is BehindPassResult.Tracking -> {
+                    AppLogger.d(
+                        LogTag.RSSI,
+                        "Behind pass tracking beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}, samples=${behindPassResult.sampleCount}, status=${behindPassResult.statusText}",
+                    )
+                    updateBehindPassUi(
+                        candidate = candidate,
+                        directionResolution = directionResolution,
+                        statusText = behindPassResult.statusText,
+                        sampleCount = behindPassResult.sampleCount,
+                        gateText = "Objekat je iza vas, cekam potvrdu prolaska.",
+                    )
+                    return
+                }
+
+                is BehindPassResult.Passed -> {
+                    AppLogger.d(
+                        LogTag.RSSI,
+                        "Behind pass confirmed beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}, samples=${behindPassResult.sampleCount}",
+                    )
+                    candidate = candidate.copy(passConfirmedBehind = true)
+                    updateBehindPassUi(
+                        candidate = candidate,
+                        directionResolution = directionResolution,
+                        statusText = behindPassResult.statusText,
+                        sampleCount = behindPassResult.sampleCount,
+                        gateText = "Prolazak potvrdjen.",
+                    )
+                }
+            }
+        } else {
+            clearBehindPassTracking(candidate)
+            if (continuousBehindTrackingOnly) {
+                return
+            }
+        }
+
+        if (continuousBehindTrackingOnly && !candidate.passConfirmedBehind) {
+            return
+        }
+
+        val cooldownResult = cooldownRepository.check(
+            beaconId = candidate.beaconId,
+            messageCode = candidate.messageCode,
+            now = candidate.detectedAt,
+        )
+        val gateText = gateDecisionText(cooldownResult)
+        if (cooldownResult.isBlocked) {
+            AppLogger.d(
+                LogTag.RSSI,
+                "Gate blocked beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}, remainingMs=${cooldownResult.remainingMs}",
+            )
+            persistReceiverDecision(
+                payload = candidate.toPayload(),
+                detectedAt = candidate.detectedAt,
+                rssi = candidate.smoothedRssi,
+                wasAnnounced = false,
                 gateText = gateText,
+                arbitrationText = "Kandidat je odbacen zbog cooldown-a.",
+            )
+            return
+        }
+
+        AppLogger.d(
+            LogTag.RSSI,
+            "Gate allowed beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}, detectedAt=${candidate.detectedAt}",
+        )
+
+        handleArbitrationDecision(
+            decision = announcementArbiter.submitCandidate(
+                candidate = candidate,
+                canSpeakImmediately = canSpeakImmediately(candidate.detectedAt),
+            ),
+            gateText = gateText,
+        )
+    }
+
+    private fun updateBehindPassUi(
+        candidate: AnnouncementCandidate,
+        directionResolution: DirectionResolution,
+        statusText: String,
+        sampleCount: Int,
+        gateText: String,
+    ) {
+        _uiState.update { state ->
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    state.receiverState.copy(
+                        lastGateDecisionText = gateText,
+                        lastEligibleForAnnouncement = null,
+                        lastDirectionLabel = directionResolution.estimate.direction,
+                        lastRelativeAngleDegrees = directionResolution.estimate.relativeAngleDegrees,
+                        directionFallbackReason = directionResolution.fallbackReason,
+                        behindPassStatusText = statusText,
+                        behindPassTrackingBeaconId = candidate.beaconId,
+                        behindPassSampleCount = sampleCount,
+                    ),
+                ),
             )
         }
     }
@@ -856,7 +989,11 @@ class AppViewModel(
         preserveLastDetection: Boolean = false,
     ) {
         val directionResolution = resolveDirectionResolution(candidate)
-        val resolvedText = directionResolution.resolvedText
+        val resolvedText = if (candidate.passConfirmedBehind) {
+            DirectionPromptBuilder.buildPassedText(candidate.messageDefinition)
+        } else {
+            directionResolution.resolvedText
+        }
         val utteranceId = "audionav-${UUID.randomUUID()}"
         when (
             val speakResult = ttsAnnouncer.announce(
@@ -971,12 +1108,50 @@ class AppViewModel(
     }
 
     private fun buildPendingAnnouncementPreview(candidate: AnnouncementCandidate): String {
+        if (candidate.passConfirmedBehind) {
+            return DirectionPromptBuilder.buildPassedText(candidate.messageDefinition)
+        }
         val directionEstimate = DirectionEstimator.estimate(
             beaconAzimuthDegrees = candidate.azimuthDegrees,
             userHeadingDegrees = currentHeadingEstimate()?.headingDegrees,
             headingConfidence = currentHeadingEstimate()?.confidence ?: DirectionConfidence.LOW,
         )
         return DirectionPromptBuilder.buildUiText(candidate.messageDefinition, directionEstimate)
+    }
+
+    private fun clearBehindPassTracking(candidate: AnnouncementCandidate) {
+        if (candidate.messageDefinition.behindSpeechPolicy != BehindSpeechPolicy.PASS_CONFIRMED_MESSAGE) {
+            return
+        }
+
+        clearBehindPassTracking(
+            beaconId = candidate.beaconId,
+            messageCode = candidate.messageCode,
+        )
+    }
+
+    private fun clearBehindPassTracking(
+        beaconId: String,
+        messageCode: Short,
+    ) {
+        behindPassTracker.clear(beaconId, messageCode)
+        _uiState.update { state ->
+            val shouldClearUi = state.receiverState.behindPassTrackingBeaconId == beaconId
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    if (shouldClearUi) {
+                        state.receiverState.copy(
+                            behindPassStatusText = null,
+                            behindPassTrackingBeaconId = null,
+                            behindPassSampleCount = 0,
+                        )
+                    } else {
+                        state.receiverState
+                    },
+                ),
+            )
+        }
     }
 
     private fun currentHeadingEstimate(): HeadingEstimate? {
@@ -1271,6 +1446,7 @@ class AppViewModel(
         cancelAnnouncementGap()
         beaconScannerController.stopScanning()
         announcementArbiter.clear()
+        behindPassTracker.reset()
         rssiStabilizer.reset()
 
         _uiState.update { state ->
@@ -1288,6 +1464,9 @@ class AppViewModel(
                         lastRelativeAngleDegrees = null,
                         lastDirectionLabel = DirectionLabel.UNKNOWN,
                         directionFallbackReason = null,
+                        behindPassStatusText = null,
+                        behindPassTrackingBeaconId = null,
+                        behindPassSampleCount = 0,
                     ),
                 ),
             )

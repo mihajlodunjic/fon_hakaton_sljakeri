@@ -10,6 +10,8 @@ object MessageCatalog {
             subjectSingular = "Pe\u0161a\u010dki prelaz",
             subjectPlural = false,
             genericTtsText = "Pe\u0161a\u010dki prelaz u blizini.",
+            directionPromptStyle = DirectionPromptStyle.CROSSWALK,
+            behindSpeechPolicy = BehindSpeechPolicy.PASS_CONFIRMED_MESSAGE,
         ),
         MessageDefinition(
             messageCode = 2,
@@ -18,6 +20,8 @@ object MessageCatalog {
             subjectSingular = "Stepenice",
             subjectPlural = true,
             genericTtsText = "Pa\u017enja, stepenice u blizini.",
+            directionPromptStyle = DirectionPromptStyle.DEFAULT,
+            behindSpeechPolicy = BehindSpeechPolicy.IMMEDIATE_DIRECTIONAL,
         ),
         MessageDefinition(
             messageCode = 3,
@@ -26,6 +30,8 @@ object MessageCatalog {
             subjectSingular = "Stub",
             subjectPlural = false,
             genericTtsText = "Pa\u017enja, stub u blizini.",
+            directionPromptStyle = DirectionPromptStyle.DEFAULT,
+            behindSpeechPolicy = BehindSpeechPolicy.IMMEDIATE_DIRECTIONAL,
         ),
         MessageDefinition(
             messageCode = 4,
@@ -34,6 +40,8 @@ object MessageCatalog {
             subjectSingular = "Ulaz",
             subjectPlural = false,
             genericTtsText = "Ulaz u blizini.",
+            directionPromptStyle = DirectionPromptStyle.DEFAULT,
+            behindSpeechPolicy = BehindSpeechPolicy.IMMEDIATE_DIRECTIONAL,
         ),
         MessageDefinition(
             messageCode = 5,
@@ -42,6 +50,18 @@ object MessageCatalog {
             subjectSingular = "Autobusko stajali\u0161te",
             subjectPlural = false,
             genericTtsText = "Autobusko stajali\u0161te u blizini.",
+            directionPromptStyle = DirectionPromptStyle.DEFAULT,
+            behindSpeechPolicy = BehindSpeechPolicy.IMMEDIATE_DIRECTIONAL,
+        ),
+        MessageDefinition(
+            messageCode = 6,
+            pointType = PointType.TRAFFIC_LIGHT,
+            operatorLabel = "Semafor",
+            subjectSingular = "Semafor",
+            subjectPlural = false,
+            genericTtsText = "Semafor u blizini.",
+            directionPromptStyle = DirectionPromptStyle.TRAFFIC_LIGHT,
+            behindSpeechPolicy = BehindSpeechPolicy.PASS_CONFIRMED_MESSAGE,
         ),
     )
 

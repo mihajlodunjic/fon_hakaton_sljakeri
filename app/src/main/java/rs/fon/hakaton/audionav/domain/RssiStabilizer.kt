@@ -7,6 +7,8 @@ sealed interface RssiStabilizationResult {
         val progress: Int,
         val threshold: Int,
         val lastRssi: Int,
+        val smoothedRssi: Int? = null,
+        val hasStableWindow: Boolean = false,
     ) : RssiStabilizationResult
 
     data class Stable(
@@ -77,6 +79,8 @@ class RssiStabilizer(
                 progress = requiredConsecutiveReads,
                 threshold = rssiThresholdDbm,
                 lastRssi = rssi,
+                smoothedRssi = refreshedReadings.average().roundToInt(),
+                hasStableWindow = true,
             )
         }
 

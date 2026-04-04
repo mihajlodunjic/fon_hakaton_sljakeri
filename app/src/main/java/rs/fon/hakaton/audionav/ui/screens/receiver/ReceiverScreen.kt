@@ -146,6 +146,29 @@ fun ReceiverScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
+                        text = "Behind potvrda prolaska",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Praceni beacon: ${state.behindPassTrackingBeaconId ?: "-"}",
+                    )
+                    Text(
+                        "RSSI trend: ${state.behindPassSampleCount}/6 uzoraka",
+                    )
+                    Text(
+                        state.behindPassStatusText
+                            ?: "Nema aktivnog behind pracenja prolaska.",
+                    )
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
                         text = "Stabilizacija",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,

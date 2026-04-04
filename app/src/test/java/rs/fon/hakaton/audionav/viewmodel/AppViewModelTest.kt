@@ -242,9 +242,9 @@ class AppViewModelTest {
         assertEquals(1, state.recentEvents.size)
         assertEquals(true, state.lastEligibleForAnnouncement)
         assertEquals("Najava dozvoljena.", state.lastGateDecisionText)
-        assertEquals("Pešački prelaz je iza vas.", state.lastDecodedText)
-        assertEquals("Pešački prelaz je iza vas.", state.lastSpokenText)
-        assertEquals(DirectionLabel.BEHIND, state.lastDirectionLabel)
+        assertEquals("Pe\u0161a\u010dki prelaz je ispred vas.", state.lastDecodedText)
+        assertEquals("Pe\u0161a\u010dki prelaz je ispred vas.", state.lastSpokenText)
+        assertEquals(DirectionLabel.AHEAD, state.lastDirectionLabel)
         assertEquals(300L, state.lastSpokenAt)
         assertEquals(1, ttsAnnouncer.announceCalls)
     }
@@ -322,6 +322,155 @@ class AppViewModelTest {
         assertEquals(false, state.lastEligibleForAnnouncement)
         assertTrue(state.lastGateDecisionText?.contains("cooldown-u") == true)
         assertEquals(1, ttsAnnouncer.announceCalls)
+    }
+
+    @Test
+    fun `crosswalk behind tracking stays silent while signal is still rising`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        listOf(
+            beaconDetected(rssi = -66, detectedAt = 100L, azimuthDegrees = 0),
+            beaconDetected(rssi = -64, detectedAt = 200L, azimuthDegrees = 0),
+            beaconDetected(rssi = -62, detectedAt = 300L, azimuthDegrees = 0),
+            beaconDetected(rssi = -60, detectedAt = 800L, azimuthDegrees = 0),
+            beaconDetected(rssi = -58, detectedAt = 1_300L, azimuthDegrees = 0),
+            beaconDetected(rssi = -57, detectedAt = 1_800L, azimuthDegrees = 0),
+        ).forEach { event ->
+            scanner.emit(event)
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(0, ttsAnnouncer.announceCalls)
+        assertEquals(0, state.recentEvents.size)
+        assertEquals("123e4567-e89b-12d3-a456-426614174000", state.behindPassTrackingBeaconId)
+        assertEquals(4, state.behindPassSampleCount)
+        assertEquals("Objekat je iza vas, cekam potvrdu prolaska.", state.lastGateDecisionText)
+        assertTrue(state.behindPassStatusText?.isNotBlank() == true)
+    }
+
+    @Test
+    fun `crosswalk behind speaks passed message after confirmed decline`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        listOf(
+            beaconDetected(rssi = -66, detectedAt = 100L, azimuthDegrees = 0),
+            beaconDetected(rssi = -64, detectedAt = 200L, azimuthDegrees = 0),
+            beaconDetected(rssi = -62, detectedAt = 300L, azimuthDegrees = 0),
+            beaconDetected(rssi = -60, detectedAt = 800L, azimuthDegrees = 0),
+            beaconDetected(rssi = -58, detectedAt = 1_300L, azimuthDegrees = 0),
+            beaconDetected(rssi = -60, detectedAt = 1_800L, azimuthDegrees = 0),
+            beaconDetected(rssi = -66, detectedAt = 2_300L, azimuthDegrees = 0),
+            beaconDetected(rssi = -74, detectedAt = 2_800L, azimuthDegrees = 0),
+        ).forEach { event ->
+            scanner.emit(event)
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals("Pro\u0161li ste pe\u0161a\u010dki prelaz.", ttsAnnouncer.announcedTexts.last())
+        assertEquals("Pro\u0161li ste pe\u0161a\u010dki prelaz.", state.lastSpokenText)
+        assertEquals("Prolazak potvr\u0111en.", state.behindPassStatusText)
+        assertEquals(1, state.recentEvents.size)
+        assertEquals(true, state.recentEvents.first().wasAnnounced)
+    }
+
+    @Test
+    fun `traffic light behind speaks passed message after confirmed decline`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        listOf(
+            beaconDetected(
+                rssi = -66,
+                detectedAt = 100L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+            beaconDetected(
+                rssi = -64,
+                detectedAt = 200L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+            beaconDetected(
+                rssi = -62,
+                detectedAt = 300L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+            beaconDetected(
+                rssi = -60,
+                detectedAt = 800L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+            beaconDetected(
+                rssi = -58,
+                detectedAt = 1_300L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+            beaconDetected(
+                rssi = -60,
+                detectedAt = 1_800L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+            beaconDetected(
+                rssi = -66,
+                detectedAt = 2_300L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+            beaconDetected(
+                rssi = -74,
+                detectedAt = 2_800L,
+                pointType = PointType.TRAFFIC_LIGHT,
+                messageCode = 6,
+                azimuthDegrees = 0,
+            ),
+        ).forEach { event ->
+            scanner.emit(event)
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals("Pro\u0161li ste semafor.", ttsAnnouncer.announcedTexts.last())
+        assertEquals("Pro\u0161li ste semafor.", state.lastSpokenText)
+        assertEquals(true, state.recentEvents.first().wasAnnounced)
     }
 
     @Test
@@ -486,7 +635,7 @@ class AppViewModelTest {
 
         state = viewModel.uiState.value.receiverState
         assertEquals(2, ttsAnnouncer.announceCalls)
-        assertEquals("Stepenice su iza vas.", ttsAnnouncer.announcedTexts.last())
+        assertEquals("Stepenice su ispred vas.", ttsAnnouncer.announcedTexts.last())
         assertEquals(null, state.pendingAnnouncementBeaconId)
         assertEquals("Cekajuci kandidat je dosao na red za glasovnu najavu.", state.lastArbitrationDecisionText)
     }
@@ -730,7 +879,7 @@ class AppViewModelTest {
         pointType: PointType = PointType.CROSSWALK,
         beaconId: String = "123e4567-e89b-12d3-a456-426614174000",
         priority: Priority = Priority.MEDIUM,
-        azimuthDegrees: Int? = 0,
+        azimuthDegrees: Int? = 180,
     ): BeaconScanEvent.BeaconDetected {
         return BeaconScanEvent.BeaconDetected(
             payload = DecodedBeaconPayload(

@@ -13,7 +13,7 @@ class DirectionPromptBuilderTest {
             "Ulaz je ispred vas.",
             DirectionPromptBuilder.buildTtsText(
                 definition,
-                DirectionEstimate(DirectionLabel.AHEAD, 0, DirectionConfidence.HIGH),
+                DirectionEstimate(DirectionLabel.AHEAD, 180, DirectionConfidence.HIGH),
             ),
         )
         assertEquals(
@@ -34,7 +34,7 @@ class DirectionPromptBuilderTest {
             "Ulaz je iza vas.",
             DirectionPromptBuilder.buildTtsText(
                 definition,
-                DirectionEstimate(DirectionLabel.BEHIND, 180, DirectionConfidence.HIGH),
+                DirectionEstimate(DirectionLabel.BEHIND, 0, DirectionConfidence.HIGH),
             ),
         )
         assertEquals(
@@ -43,6 +43,40 @@ class DirectionPromptBuilderTest {
                 definition,
                 DirectionEstimate(DirectionLabel.UNKNOWN, 0, DirectionConfidence.LOW),
             ),
+        )
+    }
+
+    @Test
+    fun `crosswalk behind falls back to generic prompt until pass confirmed`() {
+        val definition = MessageCatalog.resolve(PointType.CROSSWALK, 1)!!
+
+        assertEquals(
+            "Pe\u0161a\u010dki prelaz u blizini.",
+            DirectionPromptBuilder.buildTtsText(
+                definition,
+                DirectionEstimate(DirectionLabel.BEHIND, 0, DirectionConfidence.HIGH),
+            ),
+        )
+        assertEquals(
+            "Pro\u0161li ste pe\u0161a\u010dki prelaz.",
+            DirectionPromptBuilder.buildPassedText(definition),
+        )
+    }
+
+    @Test
+    fun `traffic light behind falls back to generic prompt until pass confirmed`() {
+        val definition = MessageCatalog.resolve(PointType.TRAFFIC_LIGHT, 6)!!
+
+        assertEquals(
+            "Semafor u blizini.",
+            DirectionPromptBuilder.buildUiText(
+                definition,
+                DirectionEstimate(DirectionLabel.BEHIND, 0, DirectionConfidence.HIGH),
+            ),
+        )
+        assertEquals(
+            "Pro\u0161li ste semafor.",
+            DirectionPromptBuilder.buildPassedText(definition),
         )
     }
 }
