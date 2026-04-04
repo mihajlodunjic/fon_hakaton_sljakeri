@@ -18,8 +18,8 @@ object DirectionEstimator {
         val relativeAngle = normalizeAngle(beaconAzimuthDegrees - userHeadingDegrees)
         val direction = when {
             relativeAngle in -20..20 -> DirectionLabel.BEHIND
-            relativeAngle in 21..160 -> DirectionLabel.RIGHT
-            relativeAngle in -160..-21 -> DirectionLabel.LEFT
+            relativeAngle in 21..144 -> DirectionLabel.LEFT
+            relativeAngle in -144..-21 -> DirectionLabel.RIGHT
             else -> DirectionLabel.AHEAD
         }
 

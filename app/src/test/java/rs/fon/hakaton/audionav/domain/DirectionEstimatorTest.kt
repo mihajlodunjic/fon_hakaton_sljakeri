@@ -12,16 +12,16 @@ class DirectionEstimatorTest {
     }
 
     @Test
-    fun `positive delta maps to right`() {
+    fun `positive delta maps to left`() {
         val estimate = DirectionEstimator.estimate(90, 0, DirectionConfidence.HIGH)
-        assertEquals(DirectionLabel.RIGHT, estimate.direction)
+        assertEquals(DirectionLabel.LEFT, estimate.direction)
         assertEquals(90, estimate.relativeAngleDegrees)
     }
 
     @Test
-    fun `negative delta maps to left`() {
+    fun `negative delta maps to right`() {
         val estimate = DirectionEstimator.estimate(270, 0, DirectionConfidence.HIGH)
-        assertEquals(DirectionLabel.LEFT, estimate.direction)
+        assertEquals(DirectionLabel.RIGHT, estimate.direction)
         assertEquals(-90, estimate.relativeAngleDegrees)
     }
 
@@ -29,6 +29,13 @@ class DirectionEstimatorTest {
     fun `large delta maps to ahead`() {
         val estimate = DirectionEstimator.estimate(180, 0, DirectionConfidence.HIGH)
         assertEquals(DirectionLabel.AHEAD, estimate.direction)
+    }
+
+    @Test
+    fun `ahead range now covers thirty five degrees around opposite heading`() {
+        val estimate = DirectionEstimator.estimate(145, 0, DirectionConfidence.HIGH)
+        assertEquals(DirectionLabel.AHEAD, estimate.direction)
+        assertEquals(145, estimate.relativeAngleDegrees)
     }
 
     @Test
