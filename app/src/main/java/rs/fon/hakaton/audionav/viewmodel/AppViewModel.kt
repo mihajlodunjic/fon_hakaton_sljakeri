@@ -3,16 +3,20 @@ package rs.fon.hakaton.audionav.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import java.util.UUID
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import rs.fon.hakaton.audionav.AppLogger
 import rs.fon.hakaton.audionav.LogTag
 import rs.fon.hakaton.audionav.ble.BeaconAdvertiseResult
 import rs.fon.hakaton.audionav.ble.BeaconAdvertiserController
 import rs.fon.hakaton.audionav.ble.BeaconPayloadCodec
+import rs.fon.hakaton.audionav.ble.BeaconScanEvent
+import rs.fon.hakaton.audionav.ble.BeaconScannerController
 import rs.fon.hakaton.audionav.domain.AppMode
 import rs.fon.hakaton.audionav.domain.AppUiState
 import rs.fon.hakaton.audionav.domain.BeaconConfig
@@ -30,10 +34,14 @@ import rs.fon.hakaton.audionav.storage.BeaconConfigStorage
 class AppViewModel(
     private val beaconConfigStorage: BeaconConfigStorage,
     private val beaconAdvertiserController: BeaconAdvertiserController,
+    private val beaconScannerController: BeaconScannerController,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(createInitialUiState())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
+
+    private var receiverRetryJob: Job? = null
+    private var receiverAutoRestartAllowed: Boolean = false
 
     fun onModeSelected(mode: AppMode) {
         AppLogger.d(LogTag.APP, "Mode selected: $mode")
@@ -70,19 +78,30 @@ class AppViewModel(
         }
 
         _uiState.update { currentState ->
-            val receiverReady = permissionUiState.status == PermissionStatus.GRANTED &&
-                bluetoothStatus == BluetoothStatus.READY
-
             val updatedState = currentState.copy(
                 permissionUiState = permissionUiState,
                 bluetoothStatus = bluetoothStatus,
                 readinessMessage = readinessMessage,
-                receiverState = currentState.receiverState.copy(isReady = receiverReady),
             )
 
             updatedState.copy(
                 beaconState = recomputeBeaconState(updatedState, updatedState.beaconState),
+                receiverState = recomputeReceiverState(updatedState, updatedState.receiverState),
             )
+        }
+
+        val receiverShouldStop = _uiState.value.receiverState.isScanning ||
+            _uiState.value.receiverState.retryScheduled
+        if (receiverShouldStop && !isReceiverRuntimeReady(_uiState.value)) {
+            val errorText = when {
+                permissionUiState.status != PermissionStatus.GRANTED -> {
+                    "Nedostaju Bluetooth dozvole."
+                }
+
+                bluetoothStatus != BluetoothStatus.READY -> "Bluetooth je iskljucen."
+                else -> "Receiver vise nije spreman za skeniranje."
+            }
+            stopReceiverScanning(errorText)
         }
     }
 
@@ -275,31 +294,74 @@ class AppViewModel(
     }
 
     fun onStartReceiverClick() {
-        AppLogger.d(LogTag.BLE_SCAN, "Receiver placeholder start clicked")
-        _uiState.update { currentState ->
-            val ready = currentState.receiverState.isReady
-            currentState.copy(
-                selectedMode = AppMode.RECEIVER,
-                receiverState = currentState.receiverState.copy(
-                    isScanning = ready,
-                    statusText = if (ready) {
-                        "Receiver placeholder scan aktiviran"
-                    } else {
-                        "Receiver nije spreman. Proverite dozvole i Bluetooth."
-                    },
+        val currentState = _uiState.value
+        if (currentState.receiverState.isScanning) {
+            return
+        }
+
+        receiverAutoRestartAllowed = true
+        cancelReceiverRetry()
+
+        val errorMessage = when {
+            currentState.permissionUiState.status != PermissionStatus.GRANTED -> {
+                "Nedostaju Bluetooth dozvole."
+            }
+
+            currentState.bluetoothStatus != BluetoothStatus.READY -> {
+                "Bluetooth nije spreman."
+            }
+
+            !currentState.receiverState.scannerSupported -> {
+                "Uredaj ne podrzava BLE skeniranje."
+            }
+
+            else -> null
+        }
+
+        if (errorMessage != null) {
+            receiverAutoRestartAllowed = false
+            AppLogger.w(LogTag.BLE_SCAN, errorMessage)
+            _uiState.update { state ->
+                val updatedState = state.copy(selectedMode = AppMode.RECEIVER)
+                updatedState.copy(
+                    receiverState = recomputeReceiverState(
+                        updatedState,
+                        updatedState.receiverState.copy(
+                            isScanning = false,
+                            retryScheduled = false,
+                            errorText = errorMessage,
+                        ),
+                    ),
+                )
+            }
+            return
+        }
+
+        _uiState.update { state ->
+            val updatedState = state.copy(selectedMode = AppMode.RECEIVER)
+            updatedState.copy(
+                receiverState = recomputeReceiverState(
+                    updatedState,
+                    updatedState.receiverState.copy(
+                        isScanning = true,
+                        retryScheduled = false,
+                        errorText = null,
+                    ),
                 ),
             )
         }
+
+        AppLogger.d(LogTag.BLE_SCAN, "Starting BLE receiver scanning")
+        beaconScannerController.startScanning(::handleScanEvent)
     }
 
     fun onStopClick(mode: AppMode) {
         AppLogger.d(LogTag.APP, "Stop clicked for $mode")
-        _uiState.update { currentState ->
-            when (mode) {
-                AppMode.BEACON -> {
-                    beaconAdvertiserController.stopAdvertising()
-                    persistCurrentBeaconConfig(isActive = false)
-
+        when (mode) {
+            AppMode.BEACON -> {
+                beaconAdvertiserController.stopAdvertising()
+                persistCurrentBeaconConfig(isActive = false)
+                _uiState.update { currentState ->
                     currentState.copy(
                         beaconState = recomputeBeaconState(
                             currentState,
@@ -312,17 +374,189 @@ class AppViewModel(
                         ),
                     )
                 }
+            }
 
-                AppMode.RECEIVER -> currentState.copy(
-                    receiverState = currentState.receiverState.copy(
-                        isScanning = false,
-                        statusText = "Not Scanning",
-                    ),
+            AppMode.RECEIVER -> stopReceiverScanning(errorText = null)
+            AppMode.NONE -> Unit
+        }
+    }
+
+    private fun handleScanEvent(event: BeaconScanEvent) {
+        when (event) {
+            BeaconScanEvent.Started -> {
+                AppLogger.d(LogTag.BLE_SCAN, "BLE scan started")
+                cancelReceiverRetry()
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                isScanning = true,
+                                retryScheduled = false,
+                                errorText = null,
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            is BeaconScanEvent.BeaconDetected -> {
+                val message = MessageCatalog.resolve(
+                    pointType = event.payload.pointType,
+                    messageCode = event.payload.messageCode,
                 )
+                val decodedText = message?.ttsText ?: "Nepoznata lokalna poruka za ovaj beacon."
+                AppLogger.d(
+                    LogTag.BLE_SCAN,
+                    "Beacon detected: beaconId=${event.payload.beaconId}, messageCode=${event.payload.messageCode}, rssi=${event.rssi}",
+                )
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                isScanning = true,
+                                retryScheduled = false,
+                                errorText = null,
+                                lastDetectedBeaconId = event.payload.beaconId,
+                                lastDetectedPointType = event.payload.pointType,
+                                lastDetectedPriority = event.payload.priority,
+                                lastDetectedMessageCode = event.payload.messageCode,
+                                lastDecodedText = decodedText,
+                                lastDetectedAt = event.detectedAt,
+                                lastRssi = event.rssi,
+                            ),
+                        ),
+                    )
+                }
+            }
 
-                AppMode.NONE -> currentState
+            is BeaconScanEvent.Failure -> {
+                AppLogger.e(
+                    LogTag.BLE_SCAN,
+                    "BLE scan failure code=${event.code}: ${event.message}",
+                )
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                isScanning = false,
+                                retryScheduled = false,
+                                errorText = event.message,
+                            ),
+                        ),
+                    )
+                }
+
+                if (event.retryable && shouldScheduleReceiverRetry()) {
+                    scheduleReceiverRetry()
+                } else {
+                    receiverAutoRestartAllowed = false
+                }
+            }
+
+            BeaconScanEvent.Stopped -> {
+                AppLogger.d(LogTag.BLE_SCAN, "BLE scan stopped")
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(
+                                isScanning = false,
+                                retryScheduled = false,
+                            ),
+                        ),
+                    )
+                }
             }
         }
+    }
+
+    private fun scheduleReceiverRetry() {
+        if (receiverRetryJob?.isActive == true) {
+            return
+        }
+
+        _uiState.update { state ->
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    state.receiverState.copy(retryScheduled = true),
+                ),
+            )
+        }
+
+        receiverRetryJob = viewModelScope.launch {
+            AppLogger.d(LogTag.BLE_SCAN, "Scheduling BLE scan retry in ${RECEIVER_RETRY_DELAY_MS}ms")
+            delay(RECEIVER_RETRY_DELAY_MS)
+            receiverRetryJob = null
+
+            val currentState = _uiState.value
+            if (!receiverAutoRestartAllowed || !isReceiverRuntimeReady(currentState)) {
+                _uiState.update { state ->
+                    state.copy(
+                        receiverState = recomputeReceiverState(
+                            state,
+                            state.receiverState.copy(retryScheduled = false),
+                        ),
+                    )
+                }
+                return@launch
+            }
+
+            _uiState.update { state ->
+                state.copy(
+                    receiverState = recomputeReceiverState(
+                        state,
+                        state.receiverState.copy(
+                            isScanning = true,
+                            retryScheduled = false,
+                            errorText = null,
+                        ),
+                    ),
+                )
+            }
+
+            beaconScannerController.startScanning(::handleScanEvent)
+        }
+    }
+
+    private fun shouldScheduleReceiverRetry(): Boolean {
+        val state = _uiState.value
+        return receiverAutoRestartAllowed &&
+            state.selectedMode == AppMode.RECEIVER &&
+            isReceiverRuntimeReady(state)
+    }
+
+    private fun stopReceiverScanning(errorText: String?) {
+        receiverAutoRestartAllowed = false
+        cancelReceiverRetry()
+        beaconScannerController.stopScanning()
+
+        _uiState.update { state ->
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    state.receiverState.copy(
+                        isScanning = false,
+                        retryScheduled = false,
+                        errorText = errorText,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun cancelReceiverRetry() {
+        receiverRetryJob?.cancel()
+        receiverRetryJob = null
+    }
+
+    private fun isReceiverRuntimeReady(state: AppUiState): Boolean {
+        return state.permissionUiState.status == PermissionStatus.GRANTED &&
+            state.bluetoothStatus == BluetoothStatus.READY &&
+            state.receiverState.scannerSupported
     }
 
     private fun updateBeaconDraft(
@@ -353,10 +587,13 @@ class AppViewModel(
             availableMessages = availableMessages,
             advertiserSupported = beaconAdvertiserController.isSupported(),
         )
+        val initialReceiverState = ReceiverScreenState(
+            scannerSupported = beaconScannerController.isSupported(),
+        )
 
         return AppUiState(
             beaconState = initialBeaconState,
-            receiverState = ReceiverScreenState(),
+            receiverState = initialReceiverState,
         )
     }
 
@@ -381,6 +618,28 @@ class AppViewModel(
         return beaconState.copy(
             isReady = ready,
             advertiserSupported = advertiserSupported,
+            statusText = statusText,
+        )
+    }
+
+    private fun recomputeReceiverState(
+        appState: AppUiState,
+        receiverState: ReceiverScreenState,
+    ): ReceiverScreenState {
+        val scannerSupported = beaconScannerController.isSupported()
+        val ready = appState.permissionUiState.status == PermissionStatus.GRANTED &&
+            appState.bluetoothStatus == BluetoothStatus.READY &&
+            scannerSupported
+
+        val statusText = when {
+            receiverState.errorText != null -> "Error"
+            receiverState.isScanning -> "Scanning"
+            else -> "Not Scanning"
+        }
+
+        return receiverState.copy(
+            scannerSupported = scannerSupported,
+            isReady = ready,
             statusText = statusText,
         )
     }
@@ -415,5 +674,9 @@ class AppViewModel(
         return joinToString(separator = " ") { byte ->
             "%02X".format(byte)
         }
+    }
+
+    companion object {
+        private const val RECEIVER_RETRY_DELAY_MS = 3_000L
     }
 }

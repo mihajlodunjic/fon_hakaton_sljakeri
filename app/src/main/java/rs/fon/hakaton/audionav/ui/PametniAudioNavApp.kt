@@ -83,7 +83,10 @@ fun PametniAudioNavApp(
             ReceiverScreen(
                 state = uiState.receiverState,
                 readinessMessage = uiState.readinessMessage,
-                onNavigateBack = { navController.popBackStack() },
+                onNavigateBack = {
+                    viewModel.onStopClick(AppMode.RECEIVER)
+                    navController.popBackStack()
+                },
                 onStartClick = viewModel::onStartReceiverClick,
                 onStopClick = { viewModel.onStopClick(AppMode.RECEIVER) },
             )

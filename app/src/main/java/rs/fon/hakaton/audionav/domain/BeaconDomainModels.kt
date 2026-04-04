@@ -61,6 +61,7 @@ data class ReceiverState(
     val lastDetectedBeaconId: String?,
     val lastDetectedMessageCode: Short?,
     val lastAnnouncementAt: Long?,
+    val lastDetectedAt: Long?,
 )
 
 data class CooldownEntry(

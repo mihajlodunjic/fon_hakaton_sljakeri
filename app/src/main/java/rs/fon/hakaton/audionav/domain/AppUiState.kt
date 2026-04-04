@@ -46,14 +46,19 @@ data class BeaconScreenState(
 )
 
 data class ReceiverScreenState(
+    val scannerSupported: Boolean = false,
     val isReady: Boolean = false,
     val isScanning: Boolean = false,
+    val retryScheduled: Boolean = false,
     val statusText: String = "Not Scanning",
+    val errorText: String? = null,
     val lastDetectedBeaconId: String? = null,
     val lastDetectedPointType: PointType? = null,
     val lastDetectedPriority: Priority? = null,
     val lastDetectedMessageCode: Short? = null,
     val lastDecodedText: String? = null,
+    val lastDetectedAt: Long? = null,
+    val lastRssi: Int? = null,
 )
 
 data class AppUiState(

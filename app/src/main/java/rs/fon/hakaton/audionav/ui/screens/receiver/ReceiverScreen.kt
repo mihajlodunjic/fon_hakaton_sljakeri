@@ -59,8 +59,22 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(state.statusText)
+                    Text("State: ${state.statusText}")
+                    Text("Scanner supported: ${if (state.scannerSupported) "Da" else "Ne"}")
                     Text(readinessMessage, style = MaterialTheme.typography.bodyMedium)
+                    state.errorText?.let { errorText ->
+                        Text(
+                            text = errorText,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    if (state.retryScheduled) {
+                        Text(
+                            text = "Retry skeniranja je zakazan za nekoliko sekundi.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 }
             }
 
@@ -75,12 +89,15 @@ fun ReceiverScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        state.lastDecodedText ?: "Ovde ce se prikazivati poslednji beacon dogadjaj u kasnijim fazama.",
+                        text = state.lastDecodedText
+                            ?: "Ovde ce se prikazivati poslednji validni beacon dogadjaj.",
                     )
                     Text("Beacon ID: ${state.lastDetectedBeaconId ?: "-"}")
                     Text("Point type: ${state.lastDetectedPointType?.displayName ?: "-"}")
                     Text("Priority: ${state.lastDetectedPriority?.displayName ?: "-"}")
                     Text("Message code: ${state.lastDetectedMessageCode?.toString() ?: "-"}")
+                    Text("RSSI: ${state.lastRssi?.toString() ?: "-"}")
+                    Text("Detected at: ${state.lastDetectedAt?.toString() ?: "-"}")
                 }
             }
 
@@ -89,6 +106,7 @@ fun ReceiverScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .sizeIn(minHeight = 56.dp),
+                enabled = state.isReady && !state.isScanning && state.scannerSupported,
             ) {
                 Text("Start Scanning")
             }
@@ -98,6 +116,7 @@ fun ReceiverScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .sizeIn(minHeight = 56.dp),
+                enabled = state.isScanning || state.retryScheduled,
             ) {
                 Text("Stop")
             }

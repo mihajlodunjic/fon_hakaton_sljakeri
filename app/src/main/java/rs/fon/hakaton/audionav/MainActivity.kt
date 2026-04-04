@@ -1,6 +1,10 @@
 package rs.fon.hakaton.audionav
 
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -9,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
+import androidx.core.content.ContextCompat
 import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.ui.PametniAudioNavApp
 import rs.fon.hakaton.audionav.ui.theme.PametniAudioNavTheme
@@ -21,12 +26,22 @@ class MainActivity : ComponentActivity() {
         AppViewModelFactory(applicationContext)
     }
     private var hasRequestedPermissions: Boolean = false
+    private var bluetoothStateReceiverRegistered: Boolean = false
 
     private val permissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         AppLogger.d(LogTag.APP, "Runtime permission request completed")
         refreshSystemStatus()
+    }
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                AppLogger.d(LogTag.APP, "Bluetooth adapter state changed")
+                refreshSystemStatus()
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,10 +71,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        registerBluetoothStateReceiver()
+    }
+
     override fun onResume() {
         super.onResume()
         AppLogger.d(LogTag.APP, "MainActivity resumed")
         refreshSystemStatus()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterBluetoothStateReceiver()
     }
 
     private fun refreshSystemStatus() {
@@ -72,6 +97,31 @@ class MainActivity : ComponentActivity() {
             permissionsGranted = permissionUiState.status == PermissionStatus.GRANTED,
         )
         viewModel.onSystemStatusChanged(permissionUiState, bluetoothStatus)
+    }
+
+    private fun registerBluetoothStateReceiver() {
+        if (bluetoothStateReceiverRegistered) {
+            return
+        }
+
+        ContextCompat.registerReceiver(
+            this,
+            bluetoothStateReceiver,
+            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        bluetoothStateReceiverRegistered = true
+    }
+
+    private fun unregisterBluetoothStateReceiver() {
+        if (!bluetoothStateReceiverRegistered) {
+            return
+        }
+
+        runCatching {
+            unregisterReceiver(bluetoothStateReceiver)
+        }
+        bluetoothStateReceiverRegistered = false
     }
 
     private fun openAppSettings() {
