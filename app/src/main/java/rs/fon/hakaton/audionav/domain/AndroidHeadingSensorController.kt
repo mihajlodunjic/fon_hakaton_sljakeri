@@ -17,7 +17,7 @@ class AndroidHeadingSensorController(
 ) : HeadingSensorController {
 
     private val sensorManager = context.applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager?
-    private val rotationVectorSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    private val gameRotationVectorSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
     private val gyroscopeSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val accelerometerSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
@@ -33,7 +33,7 @@ class AndroidHeadingSensorController(
         override fun onSensorChanged(event: SensorEvent) {
             val timestampMs = event.timestamp / 1_000_000L
             when (event.sensor.type) {
-                Sensor.TYPE_ROTATION_VECTOR -> {
+                Sensor.TYPE_GAME_ROTATION_VECTOR -> {
                     val rotationMatrix = FloatArray(9)
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     val orientation = FloatArray(3)
@@ -97,7 +97,7 @@ class AndroidHeadingSensorController(
             return
         }
         val manager = sensorManager ?: return
-        val rotation = rotationVectorSensor ?: return
+        val rotation = gameRotationVectorSensor ?: return
 
         manager.registerListener(listener, rotation, SensorManager.SENSOR_DELAY_GAME)
         gyroscopeSensor?.let { manager.registerListener(listener, it, SensorManager.SENSOR_DELAY_GAME) }

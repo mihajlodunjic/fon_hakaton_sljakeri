@@ -1,14 +1,14 @@
 package rs.fon.hakaton.audionav.ui.screens.beacon
 
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenuItem
@@ -50,7 +50,6 @@ fun BeaconScreen(
     onMessageSelected: (Short) -> Unit,
     onAzimuthChanged: (String) -> Unit,
     onAdjustAzimuth: (Int) -> Unit,
-    onCalibrateAzimuth: () -> Unit,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
 ) {
@@ -109,7 +108,7 @@ fun BeaconScreen(
                 value = state.azimuthInput,
                 onValueChange = onAzimuthChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Azimut (0-359°)") },
+                label = { Text("Lokalni ugao (0-359°)") },
                 enabled = !state.isAdvertising,
                 singleLine = true,
             )
@@ -120,12 +119,11 @@ fun BeaconScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Kalibracija smera",
+                        text = "Lokalni referentni okvir",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text("Trenutni heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
-                    Text("Pouzdanost heading-a: ${state.headingConfidenceText}")
+                    Text("Beacon koristi rucno unet lokalni ugao, bez senzorske kalibracije.")
                     Text(azimuthPreviewText(state.azimuthInput))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
@@ -142,15 +140,6 @@ fun BeaconScreen(
                         ) {
                             Text("+5°")
                         }
-                    }
-                    Button(
-                        onClick = onCalibrateAzimuth,
-                        enabled = !state.isAdvertising,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .semantics { contentDescription = "Kalibrisi azimut prema trenutnom smeru telefona" },
-                    ) {
-                        Text("Kalibrisi prema trenutnom smeru telefona")
                     }
                 }
             }
@@ -251,14 +240,14 @@ fun BeaconScreen(
 }
 
 private fun azimuthPreviewText(azimuthInput: String): String {
-    val azimuth = azimuthInput.toIntOrNull() ?: return "Unesite azimut izmedju 0 i 359 stepeni."
-    val cardinal = when {
-        azimuth in 45..134 -> "Istok"
-        azimuth in 135..224 -> "Jug"
-        azimuth in 225..314 -> "Zapad"
-        else -> "Sever"
+    val azimuth = azimuthInput.toIntOrNull() ?: return "Unesite lokalni ugao izmedju 0 i 359 stepeni."
+    val localDirection = when {
+        azimuth in 45..134 -> "desno od reference"
+        azimuth in 135..224 -> "suprotno od reference"
+        azimuth in 225..314 -> "levo od reference"
+        else -> "referentni pravac"
     }
-    return "$azimuth° = $cardinal"
+    return "$azimuth° = $localDirection"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

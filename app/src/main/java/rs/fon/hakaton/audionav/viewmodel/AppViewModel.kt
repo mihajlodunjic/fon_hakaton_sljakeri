@@ -36,6 +36,7 @@ import rs.fon.hakaton.audionav.domain.BluetoothStatus
 import rs.fon.hakaton.audionav.domain.DetectedBeaconEvent
 import rs.fon.hakaton.audionav.domain.HeadingEstimate
 import rs.fon.hakaton.audionav.domain.HeadingSensorController
+import rs.fon.hakaton.audionav.domain.LocalDirectionFrame
 import rs.fon.hakaton.audionav.domain.MessageCatalog
 import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.domain.PermissionUiState
@@ -78,8 +79,8 @@ class AppViewModel(
     private var headingPollingJob: Job? = null
     private var announcementGapUntilMs: Long? = null
     private var latestHeadingEstimate: HeadingEstimate? = null
-    private var beaconScreenVisible: Boolean = false
     private var receiverScreenVisible: Boolean = false
+    private var receiverHeadingOffsetDegrees: Int? = null
 
     init {
         ttsAnnouncer.initialize(
@@ -120,9 +121,8 @@ class AppViewModel(
         }
     }
 
-    fun onBeaconScreenVisibilityChanged(visible: Boolean) {
-        beaconScreenVisible = visible
-        syncHeadingSensorLifecycle()
+    fun onBeaconScreenVisibilityChanged(@Suppress("UNUSED_PARAMETER") visible: Boolean) {
+        Unit
     }
 
     fun onReceiverScreenVisibilityChanged(visible: Boolean) {
@@ -287,27 +287,48 @@ class AppViewModel(
         }
     }
 
-    fun onCalibrateBeaconAzimuth() {
-        val headingEstimate = latestHeadingEstimate
+    fun onCalibrateReceiverHeading() {
+        val headingEstimate = currentHeadingEstimate()
         if (headingEstimate == null || headingEstimate.confidence != DirectionConfidence.HIGH) {
             _uiState.update { state ->
                 state.copy(
-                    beaconState = recomputeBeaconState(
+                    receiverState = recomputeReceiverState(
                         state,
-                        state.beaconState.copy(
-                            errorText = "Smer telefona nije dovoljno stabilan za kalibraciju.",
+                        state.receiverState.copy(
+                            directionCalibrationText = "Kalibracija nije uspela: heading nije dovoljno stabilan.",
                         ),
-                        allowReadyStatus = false,
                     ),
                 )
             }
             return
         }
 
-        updateBeaconDraft { currentState ->
-            currentState.copy(
-                azimuthInput = headingEstimate.headingDegrees.toString(),
-                errorText = null,
+        receiverHeadingOffsetDegrees = headingEstimate.headingDegrees
+        _uiState.update { state ->
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    state.receiverState.copy(
+                        directionCalibrationText = "Kalibrisan",
+                    ),
+                ),
+            )
+        }
+    }
+
+    fun onResetReceiverHeadingCalibration() {
+        receiverHeadingOffsetDegrees = null
+        _uiState.update { state ->
+            state.copy(
+                receiverState = recomputeReceiverState(
+                    state,
+                    state.receiverState.copy(
+                        directionCalibrationText = "Nije kalibrisan",
+                        lastDirectionLabel = DirectionLabel.UNKNOWN,
+                        lastRelativeAngleDegrees = null,
+                        directionFallbackReason = null,
+                    ),
+                ),
             )
         }
     }
@@ -1096,9 +1117,10 @@ class AppViewModel(
         candidate: AnnouncementCandidate,
     ): DirectionResolution {
         val headingEstimate = currentHeadingEstimate()
+        val localHeadingDegrees = currentLocalHeadingDegrees(headingEstimate)
         val directionEstimate = DirectionEstimator.estimate(
             beaconAzimuthDegrees = candidate.azimuthDegrees,
-            userHeadingDegrees = headingEstimate?.headingDegrees,
+            userHeadingDegrees = localHeadingDegrees,
             headingConfidence = headingEstimate?.confidence ?: DirectionConfidence.LOW,
         )
         val resolvedText = DirectionPromptBuilder.buildTtsText(
@@ -1108,6 +1130,10 @@ class AppViewModel(
         val fallbackReason = when {
             directionEstimate.direction != DirectionLabel.UNKNOWN -> null
             candidate.azimuthDegrees == null -> "Koriscena je genericka poruka jer beacon ne sadrzi azimut."
+            receiverHeadingOffsetDegrees == null -> {
+                "Koriscena je genericka poruka jer smer nije kalibrisan."
+            }
+
             headingEstimate == null -> "Koriscena je genericka poruka jer heading jos nije dostupan."
             headingEstimate.confidence != DirectionConfidence.HIGH -> {
                 "Koriscena je genericka poruka jer heading nije bio stabilan."
@@ -1127,10 +1153,11 @@ class AppViewModel(
         if (candidate.passConfirmedBehind) {
             return DirectionPromptBuilder.buildPassedText(candidate.messageDefinition)
         }
+        val headingEstimate = currentHeadingEstimate()
         val directionEstimate = DirectionEstimator.estimate(
             beaconAzimuthDegrees = candidate.azimuthDegrees,
-            userHeadingDegrees = currentHeadingEstimate()?.headingDegrees,
-            headingConfidence = currentHeadingEstimate()?.confidence ?: DirectionConfidence.LOW,
+            userHeadingDegrees = currentLocalHeadingDegrees(headingEstimate),
+            headingConfidence = headingEstimate?.confidence ?: DirectionConfidence.LOW,
         )
         return DirectionPromptBuilder.buildUiText(candidate.messageDefinition, directionEstimate)
     }
@@ -1177,6 +1204,15 @@ class AppViewModel(
             return liveEstimate
         }
         return latestHeadingEstimate
+    }
+
+    private fun currentLocalHeadingDegrees(
+        headingEstimate: HeadingEstimate? = currentHeadingEstimate(),
+    ): Int? {
+        return LocalDirectionFrame.toLocalHeading(
+            rawHeadingDegrees = headingEstimate?.headingDegrees,
+            headingOffsetDegrees = receiverHeadingOffsetDegrees,
+        )
     }
 
     private fun handleTtsPlaybackEvent(event: TtsPlaybackEvent) {
@@ -1520,7 +1556,7 @@ class AppViewModel(
     }
 
     private fun syncHeadingSensorLifecycle() {
-        val shouldRun = beaconScreenVisible || receiverScreenVisible
+        val shouldRun = receiverScreenVisible
         if (shouldRun) {
             headingSensorController.start()
             if (headingPollingJob == null) {
@@ -1623,6 +1659,8 @@ class AppViewModel(
         receiverState: ReceiverScreenState,
     ): ReceiverScreenState {
         val scannerSupported = beaconScannerController.isSupported()
+        val headingEstimate = latestHeadingEstimate
+        val localHeadingDegrees = currentLocalHeadingDegrees(headingEstimate)
         val isReady = state.permissionUiState.status == PermissionStatus.GRANTED &&
             state.bluetoothStatus == BluetoothStatus.READY &&
             scannerSupported
@@ -1646,9 +1684,12 @@ class AppViewModel(
             pendingAnnouncementPriority = announcementArbiter.currentPending()?.priority,
             pendingAnnouncementRssi = announcementArbiter.currentPending()?.smoothedRssi,
             globalAnnouncementGapUntil = announcementGapUntilMs,
-            currentHeadingDegrees = latestHeadingEstimate?.headingDegrees,
-            headingConfidenceText = latestHeadingEstimate?.confidence?.let { it.directionConfidenceToDisplayText() }
+            currentHeadingDegrees = headingEstimate?.headingDegrees,
+            localHeadingDegrees = localHeadingDegrees,
+            headingConfidenceText = headingEstimate?.confidence?.let { it.directionConfidenceToDisplayText() }
                 ?: DirectionConfidence.LOW.directionConfidenceToDisplayText(),
+            isDirectionCalibrated = receiverHeadingOffsetDegrees != null,
+            directionCalibrationText = receiverState.directionCalibrationText,
         )
     }
 

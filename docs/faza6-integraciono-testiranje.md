@@ -1,5 +1,12 @@
 # Faza 6: Integraciono testiranje i kalibracija
 
+## Lokalni smer za demo
+
+- Smer vise ne koristi apsolutni sever.
+- Beacon `azimuthDegrees` sada znaci `lokalni ugao u demo okviru`.
+- Receiver pre testa mora da se kalibrise tako da trenutni pravac postane `0°`.
+- Ako receiver nije kalibrisan ili heading nije dovoljno stabilan, aplikacija koristi genericke poruke bez `levo/desno/ispred/iza`.
+
 ## Trenutni podrazumevani pragovi
 
 - `RSSI_THRESHOLD_DBM = -75`
@@ -121,3 +128,7 @@ Kao izvor istine koristiti receiver UI:
 - `lastAnnouncementAt`
 - `lastSpokenAt`
 - `lastTtsError`
+- `directionCalibrationText`
+- `localHeadingDegrees`
+
+

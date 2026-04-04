@@ -1,13 +1,13 @@
 package rs.fon.hakaton.audionav.ui.screens.receiver
 
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,11 +34,14 @@ fun ReceiverScreen(
     onNavigateBack: () -> Unit,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
+    onCalibrateHeading: () -> Unit,
+    onResetHeadingCalibration: () -> Unit,
 ) {
     val voiceAnnouncementStatus = when {
         state.lastEligibleForAnnouncement != true && state.lastTtsError == null && state.lastSpokenAt == null -> {
             "Nije pokusana"
         }
+
         state.lastTtsError != null -> "Nije zakazana"
         state.lastEligibleForAnnouncement == true -> "Uspesno zakazana"
         else -> "Ceka se ishod TTS-a"
@@ -97,6 +100,44 @@ fun ReceiverScreen(
                 }
             }
 
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Kartica kalibracije smera" },
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Kalibracija smera",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text("Raw heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Lokalni heading: ${state.localHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Pouzdanost smera: ${state.headingConfidenceText}")
+                    Text("Status: ${state.directionCalibrationText}")
+                    Button(
+                        onClick = onCalibrateHeading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Postavi trenutni smer kao nula stepeni" },
+                    ) {
+                        Text("Postavi trenutni smer kao 0°")
+                    }
+                    OutlinedButton(
+                        onClick = onResetHeadingCalibration,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Resetuj kalibraciju smera" },
+                        enabled = state.isDirectionCalibrated,
+                    ) {
+                        Text("Resetuj kalibraciju")
+                    }
+                }
+            }
+
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(20.dp),
@@ -130,7 +171,8 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text("Heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Raw heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Lokalni heading: ${state.localHeadingDegrees?.let { "$it°" } ?: "-"}")
                     Text("Pouzdanost smera: ${state.headingConfidenceText}")
                     Text("Smer objekta: ${state.lastDirectionLabel.toDisplayText()}")
                     Text("Relativni ugao: ${state.lastRelativeAngleDegrees?.let { formatRelativeAngle(it) } ?: "-"}")
@@ -150,12 +192,8 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(
-                        "Praceni beacon: ${state.behindPassTrackingBeaconId ?: "-"}",
-                    )
-                    Text(
-                        "RSSI trend: ${state.behindPassSampleCount}/6 uzoraka",
-                    )
+                    Text("Praceni beacon: ${state.behindPassTrackingBeaconId ?: "-"}")
+                    Text("RSSI trend: ${state.behindPassSampleCount}/6 uzoraka")
                     Text(
                         state.behindPassStatusText
                             ?: "Nema aktivnog behind pracenja prolaska.",
@@ -173,11 +211,9 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    Text("${state.stabilizationProgress}/${state.requiredStabilizationCount} iznad ${state.rssiThreshold} dBm")
                     Text(
-                        text = "${state.stabilizationProgress}/${state.requiredStabilizationCount} iznad ${state.rssiThreshold} dBm",
-                    )
-                    Text(
-                        text = state.lastGateDecisionText
+                        state.lastGateDecisionText
                             ?: "Ceka se dovoljan broj uzastopnih validnih RSSI ocitavanja.",
                     )
                 }
@@ -194,7 +230,7 @@ fun ReceiverScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = when (state.lastEligibleForAnnouncement) {
+                        when (state.lastEligibleForAnnouncement) {
                             true -> "Najava dozvoljena po gate-u."
                             false -> "Najava trenutno nije dozvoljena po gate-u."
                             null -> "Gate odluka jos nije doneta."
@@ -203,11 +239,11 @@ fun ReceiverScreen(
                     Text("Poslednja dozvoljena najava: ${state.lastAnnouncementAt?.toString() ?: "-"}")
                     Text("Glasovna najava: $voiceAnnouncementStatus")
                     Text(
-                        text = state.lastGateDecisionText
+                        state.lastGateDecisionText
                             ?: "Cooldown odluka ce biti prikazana kada signal postane stabilan.",
                     )
                     Text(
-                        text = state.lastArbitrationDecisionText
+                        state.lastArbitrationDecisionText
                             ?: "Arbitraza prioriteta i blizine jos nije aktivirana.",
                     )
                 }

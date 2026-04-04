@@ -11,6 +11,13 @@ Ako `docs/faza6-integraciono-testiranje.md` nema popunjene finalne pragove, kori
 - `RESET_AFTER_SIGNAL_GAP_MS = 2000`
 - `COOLDOWN_WINDOW_MS = 10000`
 
+## Lokalni smer za demo
+
+- Demo koristi lokalni referentni pravac, ne apsolutni sever.
+- Beacon uglovi se unose rucno kao lokalni uglovi u istom okviru.
+- Receiver pre live demonstracije mora da se kalibrise dugmetom `Postavi trenutni smer kao 0°`.
+- Bez kalibracije ili pri nestabilnom heading-u aplikacija govori genericku poruku bez smera.
+
 ## Uredjaji i uloge
 
 | Stavka | Vrednost |
@@ -54,7 +61,7 @@ Ciljano trajanje: `2.5 do 3.5 minuta`.
 
 ### Pocetno stanje pre izlaska pred zirijem
 
-- Receiver telefon je na ekranu `Receiver mod`.
+- Receiver telefon je na ekranu `Receiver mod` i smer je kalibrisan ka unapred dogovorenom referentnom pravcu.
 - Beacon telefon je na ekranu `Beacon mod`.
 - Na beacon telefonu je vec podesena konfiguracija za prvi scenario.
 - Beacon jos ne emituje, osim ako je na probi potvrdeno da je stabilnije da emitovanje vec radi.
@@ -142,6 +149,7 @@ Ciljano trajanje: `2.5 do 3.5 minuta`.
 
 - Beacon telefon otvoren na prvom scenariju
 - Receiver telefon otvoren na `Receiver mod` ekranu
+- Receiver kalibrisan ka lokalnom referentnom pravcu
 - `TTS status` je `Spreman` ili `Fallback jezik`
 - Ekrani nisu zakljucani i timeout je dovoljno dug
 - Upisan redosled scenarija za danasnji demo
@@ -229,3 +237,5 @@ Izuzetak je samo kritican blocker koji direktno sprecava demo.
 - Dve uzastopne generalne probe prolaze bez debugovanja i bez promene koda.
 - Tim zna tacno ko govori, ko upravlja beacon uredjajem, a ko receiver uredjajem.
 - Postoji jedna kratka i jasna recenica o ogranicenjima MVP-a.
+
+

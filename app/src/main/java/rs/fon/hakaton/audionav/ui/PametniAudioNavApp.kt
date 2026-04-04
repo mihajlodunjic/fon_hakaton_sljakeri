@@ -82,7 +82,6 @@ fun PametniAudioNavApp(
                 onMessageSelected = viewModel::onBeaconMessageCodeSelected,
                 onAzimuthChanged = viewModel::onBeaconAzimuthChanged,
                 onAdjustAzimuth = viewModel::onBeaconAdjustAzimuth,
-                onCalibrateAzimuth = viewModel::onCalibrateBeaconAzimuth,
                 onStartClick = viewModel::onStartBeaconClick,
                 onStopClick = { viewModel.onStopClick(AppMode.BEACON) },
             )
@@ -104,6 +103,8 @@ fun PametniAudioNavApp(
                 },
                 onStartClick = viewModel::onStartReceiverClick,
                 onStopClick = { viewModel.onStopClick(AppMode.RECEIVER) },
+                onCalibrateHeading = viewModel::onCalibrateReceiverHeading,
+                onResetHeadingCalibration = viewModel::onResetReceiverHeadingCalibration,
             )
         }
     }

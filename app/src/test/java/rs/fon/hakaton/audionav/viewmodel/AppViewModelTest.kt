@@ -2,6 +2,7 @@ package rs.fon.hakaton.audionav.viewmodel
 
 import java.util.UUID
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -259,6 +260,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -291,6 +293,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -319,6 +322,40 @@ class AppViewModelTest {
     }
 
     @Test
+    fun `receiver without calibration falls back to generic direction prompt`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    pointType = PointType.ENTRANCE,
+                    messageCode = 4,
+                    rssi = -60,
+                    detectedAt = 400L + index,
+                    azimuthDegrees = 90,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals("Ulaz u blizini.", state.lastDecodedText)
+        assertEquals(DirectionLabel.UNKNOWN, state.lastDirectionLabel)
+        assertEquals(
+            "Koriscena je genericka poruka jer smer nije kalibrisan.",
+            state.directionFallbackReason,
+        )
+    }
+
+    @Test
     fun `receiver valid payload with unknown message code shows fallback text after stabilization`() = runTest {
         val scanner = FakeBeaconScannerController()
         val ttsAnnouncer = FakeTtsAnnouncer()
@@ -327,6 +364,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -369,6 +407,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -402,6 +441,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -435,6 +475,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -470,6 +511,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -553,6 +595,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -577,6 +620,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -662,6 +706,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -713,13 +758,7 @@ class AppViewModelTest {
     fun `low confidence heading falls back to generic prompt`() = runTest {
         val scanner = FakeBeaconScannerController()
         val ttsAnnouncer = FakeTtsAnnouncer()
-        val headingController = FakeHeadingSensorController(
-            estimate = HeadingEstimate(
-                headingDegrees = 0,
-                confidence = DirectionConfidence.LOW,
-                sampleCount = 6,
-            ),
-        )
+        val headingController = FakeHeadingSensorController()
         val viewModel = createViewModel(
             scanner = scanner,
             ttsAnnouncer = ttsAnnouncer,
@@ -728,6 +767,12 @@ class AppViewModelTest {
         viewModel.onSystemStatusChanged(
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
+        )
+        calibrateReceiverDirection(viewModel)
+        headingController.estimate = HeadingEstimate(
+            headingDegrees = 0,
+            confidence = DirectionConfidence.LOW,
+            sampleCount = 6,
         )
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
@@ -763,6 +808,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -821,6 +867,7 @@ class AppViewModelTest {
             permissionUiState = PermissionStatus.GRANTED.let { PermissionUiState(status = it) },
             bluetoothStatus = BluetoothStatus.READY,
         )
+        calibrateReceiverDirection(viewModel)
         viewModel.onStartReceiverClick()
         advanceUntilIdle()
 
@@ -940,6 +987,11 @@ class AppViewModelTest {
             ttsAnnouncer = ttsAnnouncer,
             timeProvider = clock::now,
         )
+    }
+
+    private fun TestScope.calibrateReceiverDirection(viewModel: AppViewModel) {
+        viewModel.onCalibrateReceiverHeading()
+        advanceUntilIdle()
     }
 
     private fun beaconDetected(
