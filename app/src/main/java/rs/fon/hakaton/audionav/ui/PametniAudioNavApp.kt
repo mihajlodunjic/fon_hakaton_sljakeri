@@ -67,9 +67,13 @@ fun PametniAudioNavApp(
 
         composable(AppDestination.BeaconConfig.route) {
             BeaconScreen(
+                state = uiState.beaconState,
                 readinessMessage = uiState.readinessMessage,
-                statusText = uiState.beaconState.statusText,
                 onNavigateBack = { navController.popBackStack() },
+                onLabelChanged = viewModel::onBeaconLabelChanged,
+                onPointTypeSelected = viewModel::onBeaconPointTypeSelected,
+                onPrioritySelected = viewModel::onBeaconPrioritySelected,
+                onMessageSelected = viewModel::onBeaconMessageCodeSelected,
                 onStartClick = viewModel::onStartBeaconClick,
                 onStopClick = { viewModel.onStopClick(AppMode.BEACON) },
             )
@@ -77,8 +81,8 @@ fun PametniAudioNavApp(
 
         composable(AppDestination.Receiver.route) {
             ReceiverScreen(
+                state = uiState.receiverState,
                 readinessMessage = uiState.readinessMessage,
-                statusText = uiState.receiverState.statusText,
                 onNavigateBack = { navController.popBackStack() },
                 onStartClick = viewModel::onStartReceiverClick,
                 onStopClick = { viewModel.onStopClick(AppMode.RECEIVER) },

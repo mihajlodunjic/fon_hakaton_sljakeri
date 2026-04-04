@@ -25,15 +25,35 @@ data class PermissionUiState(
     val requiredPermissions: List<String> = emptyList(),
 )
 
+private val defaultPointType = PointType.CROSSWALK
+private val defaultMessage = MessageCatalog
+    .definitionsFor(defaultPointType)
+    .first()
+
 data class BeaconScreenState(
+    val beaconId: String = "",
+    val labelInput: String = "",
+    val selectedPointType: PointType = defaultPointType,
+    val selectedPriority: Priority = Priority.MEDIUM,
+    val selectedMessageCode: Short = defaultMessage.messageCode,
+    val availableMessages: List<MessageDefinition> = MessageCatalog.definitionsFor(defaultPointType),
     val isReady: Boolean = false,
+    val isAdvertising: Boolean = false,
     val statusText: String = "Idle",
+    val errorText: String? = null,
+    val advertiserSupported: Boolean = false,
+    val lastEncodedPayloadHex: String? = null,
 )
 
 data class ReceiverScreenState(
     val isReady: Boolean = false,
     val isScanning: Boolean = false,
     val statusText: String = "Not Scanning",
+    val lastDetectedBeaconId: String? = null,
+    val lastDetectedPointType: PointType? = null,
+    val lastDetectedPriority: Priority? = null,
+    val lastDetectedMessageCode: Short? = null,
+    val lastDecodedText: String? = null,
 )
 
 data class AppUiState(

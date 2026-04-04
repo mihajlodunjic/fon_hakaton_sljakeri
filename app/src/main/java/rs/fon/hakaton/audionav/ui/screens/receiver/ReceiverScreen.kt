@@ -19,12 +19,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import rs.fon.hakaton.audionav.domain.ReceiverScreenState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiverScreen(
+    state: ReceiverScreenState,
     readinessMessage: String,
-    statusText: String,
     onNavigateBack: () -> Unit,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
@@ -58,7 +59,7 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(statusText)
+                    Text(state.statusText)
                     Text(readinessMessage, style = MaterialTheme.typography.bodyMedium)
                 }
             }
@@ -73,7 +74,13 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text("Ovde će se prikazivati poslednji beacon događaj u kasnijim fazama.")
+                    Text(
+                        state.lastDecodedText ?: "Ovde ce se prikazivati poslednji beacon dogadjaj u kasnijim fazama.",
+                    )
+                    Text("Beacon ID: ${state.lastDetectedBeaconId ?: "-"}")
+                    Text("Point type: ${state.lastDetectedPointType?.displayName ?: "-"}")
+                    Text("Priority: ${state.lastDetectedPriority?.displayName ?: "-"}")
+                    Text("Message code: ${state.lastDetectedMessageCode?.toString() ?: "-"}")
                 }
             }
 

@@ -13,10 +13,13 @@ import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.ui.PametniAudioNavApp
 import rs.fon.hakaton.audionav.ui.theme.PametniAudioNavTheme
 import rs.fon.hakaton.audionav.viewmodel.AppViewModel
+import rs.fon.hakaton.audionav.viewmodel.AppViewModelFactory
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: AppViewModel by viewModels()
+    private val viewModel: AppViewModel by viewModels {
+        AppViewModelFactory(applicationContext)
+    }
     private var hasRequestedPermissions: Boolean = false
 
     private val permissionsLauncher = registerForActivityResult(
@@ -30,6 +33,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AppLogger.d(LogTag.APP, "MainActivity created")
         refreshSystemStatus()
+        viewModel.loadPersistedBeaconConfig()
 
         setContent {
             PametniAudioNavTheme {
