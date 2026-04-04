@@ -10,9 +10,13 @@ import rs.fon.hakaton.audionav.domain.PointType
 import rs.fon.hakaton.audionav.domain.Priority
 
 object BeaconProtocol {
-    const val PROTOCOL_VERSION: Byte = 1
+    const val PROTOCOL_VERSION_V1: Byte = 1
+    const val PROTOCOL_VERSION_V2: Byte = 2
+    const val PROTOCOL_VERSION: Byte = PROTOCOL_VERSION_V2
     const val MANUFACTURER_ID: Int = 0x13A7
-    const val PAYLOAD_LENGTH: Int = 21
+    const val V1_PAYLOAD_LENGTH: Int = 21
+    const val V2_PAYLOAD_LENGTH: Int = 23
+    const val PAYLOAD_LENGTH: Int = V2_PAYLOAD_LENGTH
 }
 
 sealed interface PayloadDecodeResult {
@@ -26,6 +30,7 @@ enum class InvalidPayloadReason {
     INVALID_UUID,
     UNKNOWN_POINT_TYPE,
     UNKNOWN_PRIORITY,
+    INVALID_AZIMUTH,
 }
 
 object BeaconPayloadCodec {
@@ -37,7 +42,7 @@ object BeaconPayloadCodec {
 
         val uuid = UUID.fromString(config.beaconId)
         return ByteBuffer
-            .allocate(BeaconProtocol.PAYLOAD_LENGTH)
+            .allocate(BeaconProtocol.V2_PAYLOAD_LENGTH)
             .order(ByteOrder.BIG_ENDIAN)
             .put(BeaconProtocol.PROTOCOL_VERSION)
             .putLong(uuid.mostSignificantBits)
@@ -45,20 +50,29 @@ object BeaconPayloadCodec {
             .put(config.pointType.code.toByte())
             .put(config.priority.code.toByte())
             .putShort(config.messageCode)
+            .putShort(config.azimuthDegrees.toShort())
             .array()
     }
 
     fun decode(payload: ByteArray): PayloadDecodeResult {
-        if (payload.size != BeaconProtocol.PAYLOAD_LENGTH) {
+        if (payload.size != BeaconProtocol.V1_PAYLOAD_LENGTH &&
+            payload.size != BeaconProtocol.V2_PAYLOAD_LENGTH
+        ) {
+            return PayloadDecodeResult.Invalid(InvalidPayloadReason.WRONG_LENGTH)
+        }
+
+        val protocolVersion = payload.first()
+        val expectedLength = when (protocolVersion) {
+            BeaconProtocol.PROTOCOL_VERSION_V1 -> BeaconProtocol.V1_PAYLOAD_LENGTH
+            BeaconProtocol.PROTOCOL_VERSION_V2 -> BeaconProtocol.V2_PAYLOAD_LENGTH
+            else -> return PayloadDecodeResult.Invalid(InvalidPayloadReason.UNSUPPORTED_PROTOCOL_VERSION)
+        }
+        if (payload.size != expectedLength) {
             return PayloadDecodeResult.Invalid(InvalidPayloadReason.WRONG_LENGTH)
         }
 
         val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-        val protocolVersion = buffer.get()
-        if (protocolVersion != BeaconProtocol.PROTOCOL_VERSION) {
-            return PayloadDecodeResult.Invalid(InvalidPayloadReason.UNSUPPORTED_PROTOCOL_VERSION)
-        }
-
+        buffer.get()
         val beaconId = decodeUuid(buffer) ?: return PayloadDecodeResult.Invalid(
             InvalidPayloadReason.INVALID_UUID,
         )
@@ -70,6 +84,14 @@ object BeaconPayloadCodec {
             ?: return PayloadDecodeResult.Invalid(InvalidPayloadReason.UNKNOWN_PRIORITY)
 
         val messageCode = buffer.short
+        val azimuthDegrees = if (protocolVersion == BeaconProtocol.PROTOCOL_VERSION_V2) {
+            buffer.short.toInt() and 0xFFFF
+        } else {
+            null
+        }
+        if (azimuthDegrees != null && azimuthDegrees !in 0..359) {
+            return PayloadDecodeResult.Invalid(InvalidPayloadReason.INVALID_AZIMUTH)
+        }
 
         return PayloadDecodeResult.Success(
             payload = DecodedBeaconPayload(
@@ -78,6 +100,7 @@ object BeaconPayloadCodec {
                 pointType = pointType,
                 priority = priority,
                 messageCode = messageCode,
+                azimuthDegrees = azimuthDegrees,
             ),
         )
     }

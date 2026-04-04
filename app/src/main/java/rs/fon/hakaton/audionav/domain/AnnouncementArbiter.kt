@@ -5,8 +5,9 @@ data class AnnouncementCandidate(
     val messageCode: Short,
     val pointType: PointType,
     val priority: Priority,
-    val ttsText: String,
-    val decodedText: String,
+    val protocolVersion: Int,
+    val azimuthDegrees: Int?,
+    val messageDefinition: MessageDefinition,
     val detectedAt: Long,
     val smoothedRssi: Int,
 )
@@ -14,6 +15,7 @@ data class AnnouncementCandidate(
 data class ActiveAnnouncement(
     val candidate: AnnouncementCandidate,
     val utteranceId: String,
+    val spokenText: String,
 )
 
 sealed interface AnnouncementArbitrationResult {
@@ -100,10 +102,12 @@ class AnnouncementArbiter(
     fun onAnnouncementQueued(
         candidate: AnnouncementCandidate,
         utteranceId: String,
+        spokenText: String,
     ) {
         activeAnnouncement = ActiveAnnouncement(
             candidate = candidate,
             utteranceId = utteranceId,
+            spokenText = spokenText,
         )
     }
 
@@ -156,8 +160,9 @@ class AnnouncementArbiter(
         return currentPending.copy(
             detectedAt = maxOf(currentPending.detectedAt, newCandidate.detectedAt),
             smoothedRssi = maxOf(currentPending.smoothedRssi, newCandidate.smoothedRssi),
-            decodedText = newCandidate.decodedText,
-            ttsText = newCandidate.ttsText,
+            protocolVersion = newCandidate.protocolVersion,
+            azimuthDegrees = newCandidate.azimuthDegrees,
+            messageDefinition = newCandidate.messageDefinition,
         )
     }
 

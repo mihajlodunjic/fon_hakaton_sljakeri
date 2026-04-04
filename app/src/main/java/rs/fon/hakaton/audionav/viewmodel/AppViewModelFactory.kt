@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import rs.fon.hakaton.audionav.ble.AndroidBeaconAdvertiserController
 import rs.fon.hakaton.audionav.ble.AndroidBeaconScannerController
+import rs.fon.hakaton.audionav.domain.AndroidHeadingSensorController
 import rs.fon.hakaton.audionav.domain.RssiStabilizer
 import rs.fon.hakaton.audionav.storage.CooldownRepository
 import rs.fon.hakaton.audionav.storage.DataStoreBeaconConfigStorage
@@ -29,6 +30,7 @@ class AppViewModelFactory(
                 receiverRuntimeStorage = DataStoreReceiverRuntimeStorage.fromContext(appContext),
             ),
             rssiStabilizer = RssiStabilizer(),
+            headingSensorController = AndroidHeadingSensorController(appContext),
             ttsAnnouncer = AndroidTtsAnnouncer(appContext),
         ) as T
     }

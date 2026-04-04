@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import rs.fon.hakaton.audionav.domain.ReceiverScreenState
+import rs.fon.hakaton.audionav.domain.toDisplayText
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,6 +117,26 @@ fun ReceiverScreen(
                     Text("Kod poruke: ${state.lastDetectedMessageCode?.toString() ?: "-"}")
                     Text("RSSI: ${state.lastRssi?.toString() ?: "-"}")
                     Text("Detektovano u: ${state.lastDetectedAt?.toString() ?: "-"}")
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Smer i heading",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text("Heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Pouzdanost smera: ${state.headingConfidenceText}")
+                    Text("Smer objekta: ${state.lastDirectionLabel.toDisplayText()}")
+                    Text("Relativni ugao: ${state.lastRelativeAngleDegrees?.let { formatRelativeAngle(it) } ?: "-"}")
+                    state.directionFallbackReason?.let { fallbackReason ->
+                        Text(fallbackReason, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
 
@@ -273,5 +294,13 @@ fun ReceiverScreen(
                 Text("Zaustavi")
             }
         }
+    }
+}
+
+private fun formatRelativeAngle(angle: Int): String {
+    return if (angle > 0) {
+        "+${angle}°"
+    } else {
+        "$angle°"
     }
 }

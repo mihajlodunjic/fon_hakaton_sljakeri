@@ -20,6 +20,10 @@ import rs.fon.hakaton.audionav.domain.BluetoothStatus
 import rs.fon.hakaton.audionav.domain.CooldownEntry
 import rs.fon.hakaton.audionav.domain.DecodedBeaconPayload
 import rs.fon.hakaton.audionav.domain.DetectedBeaconEvent
+import rs.fon.hakaton.audionav.domain.DirectionConfidence
+import rs.fon.hakaton.audionav.domain.DirectionLabel
+import rs.fon.hakaton.audionav.domain.HeadingEstimate
+import rs.fon.hakaton.audionav.domain.HeadingSensorController
 import rs.fon.hakaton.audionav.domain.MessageCatalog
 import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.domain.PermissionUiState
@@ -69,6 +73,7 @@ class AppViewModelTest {
                 pointType = PointType.STAIRS,
                 priority = Priority.HIGH,
                 messageCode = 2,
+                azimuthDegrees = 90,
                 isActive = true,
                 lastUpdatedAt = 99L,
             ),
@@ -83,6 +88,7 @@ class AppViewModelTest {
         assertEquals(PointType.STAIRS, state.selectedPointType)
         assertEquals(Priority.HIGH, state.selectedPriority)
         assertEquals(2.toShort(), state.selectedMessageCode)
+        assertEquals("90", state.azimuthInput)
         assertEquals(false, storage.storedConfig?.isActive)
         assertEquals(false, state.isAdvertising)
     }
@@ -109,6 +115,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        viewModel.onBeaconAzimuthChanged("90")
 
         viewModel.onStartBeaconClick()
         advanceUntilIdle()
@@ -131,6 +138,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        viewModel.onBeaconAzimuthChanged("90")
 
         viewModel.onStartBeaconClick()
         advanceUntilIdle()
@@ -154,6 +162,7 @@ class AppViewModelTest {
             permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
             bluetoothStatus = BluetoothStatus.READY,
         )
+        viewModel.onBeaconAzimuthChanged("90")
         viewModel.onStartBeaconClick()
         advanceUntilIdle()
 
@@ -233,8 +242,9 @@ class AppViewModelTest {
         assertEquals(1, state.recentEvents.size)
         assertEquals(true, state.lastEligibleForAnnouncement)
         assertEquals("Najava dozvoljena.", state.lastGateDecisionText)
-        assertEquals("Pesacki prelaz ispred vas.", state.lastDecodedText)
-        assertEquals("Pesacki prelaz ispred vas.", state.lastSpokenText)
+        assertEquals("Pešački prelaz je ispred vas.", state.lastDecodedText)
+        assertEquals("Pešački prelaz je ispred vas.", state.lastSpokenText)
+        assertEquals(DirectionLabel.AHEAD, state.lastDirectionLabel)
         assertEquals(300L, state.lastSpokenAt)
         assertEquals(1, ttsAnnouncer.announceCalls)
     }
@@ -255,11 +265,12 @@ class AppViewModelTest {
             scanner.emit(
                 BeaconScanEvent.BeaconDetected(
                     payload = DecodedBeaconPayload(
-                        protocolVersion = 1,
+                        protocolVersion = 2,
                         beaconId = "123e4567-e89b-12d3-a456-426614174000",
                         pointType = PointType.CROSSWALK,
                         priority = Priority.MEDIUM,
                         messageCode = 99,
+                        azimuthDegrees = 0,
                     ),
                     rssi = -58,
                     detectedAt = 500L + index,
@@ -475,9 +486,54 @@ class AppViewModelTest {
 
         state = viewModel.uiState.value.receiverState
         assertEquals(2, ttsAnnouncer.announceCalls)
-        assertEquals("Paznja, stepenice.", ttsAnnouncer.announcedTexts.last())
+        assertEquals("Stepenice su ispred vas.", ttsAnnouncer.announcedTexts.last())
         assertEquals(null, state.pendingAnnouncementBeaconId)
         assertEquals("Cekajuci kandidat je dosao na red za glasovnu najavu.", state.lastArbitrationDecisionText)
+    }
+
+    @Test
+    fun `low confidence heading falls back to generic prompt`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val headingController = FakeHeadingSensorController(
+            estimate = HeadingEstimate(
+                headingDegrees = 0,
+                confidence = DirectionConfidence.LOW,
+                sampleCount = 6,
+            ),
+        )
+        val viewModel = createViewModel(
+            scanner = scanner,
+            ttsAnnouncer = ttsAnnouncer,
+            headingController = headingController,
+        )
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    pointType = PointType.ENTRANCE,
+                    messageCode = 4,
+                    rssi = -60,
+                    detectedAt = 900L + index,
+                    azimuthDegrees = 90,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals("Ulaz u blizini.", state.lastDecodedText)
+        assertEquals(DirectionLabel.UNKNOWN, state.lastDirectionLabel)
+        assertEquals(
+            "Koriscena je genericka poruka jer heading nije bio stabilan.",
+            state.directionFallbackReason,
+        )
     }
 
     @Test
@@ -652,6 +708,7 @@ class AppViewModelTest {
         scanner: FakeBeaconScannerController = FakeBeaconScannerController(),
         runtimeStorage: FakeReceiverRuntimeStorage = FakeReceiverRuntimeStorage(),
         ttsAnnouncer: FakeTtsAnnouncer = FakeTtsAnnouncer(),
+        headingController: FakeHeadingSensorController = FakeHeadingSensorController(),
         clock: FakeClock = FakeClock(),
     ): AppViewModel {
         return AppViewModel(
@@ -660,6 +717,7 @@ class AppViewModelTest {
             beaconScannerController = scanner,
             cooldownRepository = CooldownRepository(runtimeStorage),
             rssiStabilizer = RssiStabilizer(),
+            headingSensorController = headingController,
             ttsAnnouncer = ttsAnnouncer,
             timeProvider = clock::now,
         )
@@ -672,14 +730,16 @@ class AppViewModelTest {
         pointType: PointType = PointType.CROSSWALK,
         beaconId: String = "123e4567-e89b-12d3-a456-426614174000",
         priority: Priority = Priority.MEDIUM,
+        azimuthDegrees: Int? = 0,
     ): BeaconScanEvent.BeaconDetected {
         return BeaconScanEvent.BeaconDetected(
             payload = DecodedBeaconPayload(
-                protocolVersion = 1,
+                protocolVersion = if (azimuthDegrees == null) 1 else 2,
                 beaconId = beaconId,
                 pointType = pointType,
                 priority = priority,
                 messageCode = messageCode,
+                azimuthDegrees = azimuthDegrees,
             ),
             rssi = rssi,
             detectedAt = detectedAt,
@@ -700,6 +760,21 @@ private class FakeBeaconConfigStorage(
     override suspend fun clearActiveFlag() {
         storedConfig = storedConfig?.copy(isActive = false)
     }
+}
+
+private class FakeHeadingSensorController(
+    var estimate: HeadingEstimate? = HeadingEstimate(
+        headingDegrees = 0,
+        confidence = DirectionConfidence.HIGH,
+        sampleCount = 8,
+    ),
+) : HeadingSensorController {
+
+    override fun start() = Unit
+
+    override fun stop() = Unit
+
+    override fun latestEstimate(): HeadingEstimate? = estimate
 }
 
 private class FakeTtsAnnouncer(

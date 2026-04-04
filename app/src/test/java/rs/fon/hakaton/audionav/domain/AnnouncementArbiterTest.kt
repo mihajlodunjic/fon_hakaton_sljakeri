@@ -83,8 +83,9 @@ class AnnouncementArbiterTest {
             messageCode = 1,
             pointType = PointType.CROSSWALK,
             priority = priority,
-            ttsText = "Pesacki prelaz ispred vas.",
-            decodedText = "Pesacki prelaz ispred vas.",
+            protocolVersion = 2,
+            azimuthDegrees = 90,
+            messageDefinition = MessageCatalog.resolve(PointType.CROSSWALK, 1)!!,
             detectedAt = detectedAt,
             smoothedRssi = smoothedRssi,
         )

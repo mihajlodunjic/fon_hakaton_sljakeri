@@ -39,6 +39,7 @@ data class BeaconScreenState(
     val selectedPointType: PointType = defaultPointType,
     val selectedPriority: Priority = Priority.MEDIUM,
     val selectedMessageCode: Short = defaultMessage.messageCode,
+    val azimuthInput: String = "",
     val availableMessages: List<MessageDefinition> = MessageCatalog.definitionsFor(defaultPointType),
     val isReady: Boolean = false,
     val isAdvertising: Boolean = false,
@@ -46,6 +47,8 @@ data class BeaconScreenState(
     val errorText: String? = null,
     val advertiserSupported: Boolean = false,
     val lastEncodedPayloadHex: String? = null,
+    val currentHeadingDegrees: Int? = null,
+    val headingConfidenceText: String = DirectionConfidence.LOW.toDisplayText(),
 )
 
 data class ReceiverScreenState(
@@ -84,6 +87,11 @@ data class ReceiverScreenState(
     val pendingAnnouncementRssi: Int? = null,
     val lastArbitrationDecisionText: String? = null,
     val globalAnnouncementGapUntil: Long? = null,
+    val currentHeadingDegrees: Int? = null,
+    val headingConfidenceText: String = DirectionConfidence.LOW.toDisplayText(),
+    val lastRelativeAngleDegrees: Int? = null,
+    val lastDirectionLabel: DirectionLabel = DirectionLabel.UNKNOWN,
+    val directionFallbackReason: String? = null,
 )
 
 data class AppUiState(

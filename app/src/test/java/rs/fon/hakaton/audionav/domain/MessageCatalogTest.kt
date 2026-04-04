@@ -11,7 +11,7 @@ class MessageCatalogTest {
     fun `resolve returns Serbian TTS text for crosswalk code 1`() {
         val definition = MessageCatalog.resolve(PointType.CROSSWALK, 1)
 
-        assertEquals("Pesacki prelaz ispred vas.", definition?.ttsText)
+        assertEquals("Pešački prelaz u blizini.", definition?.genericTtsText)
     }
 
     @Test

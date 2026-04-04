@@ -71,11 +71,12 @@ class RssiStabilizerTest {
 
     private fun payload(beaconId: String): DecodedBeaconPayload {
         return DecodedBeaconPayload(
-            protocolVersion = 1,
+            protocolVersion = 2,
             beaconId = beaconId,
             pointType = PointType.CROSSWALK,
             priority = Priority.MEDIUM,
             messageCode = 1,
+            azimuthDegrees = 90,
         )
     }
 }

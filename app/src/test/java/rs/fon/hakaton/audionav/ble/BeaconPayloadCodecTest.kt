@@ -26,6 +26,7 @@ class BeaconPayloadCodecTest {
         assertEquals(config.pointType, payload.pointType)
         assertEquals(config.priority, payload.priority)
         assertEquals(config.messageCode, payload.messageCode)
+        assertEquals(config.azimuthDegrees, payload.azimuthDegrees)
     }
 
     @Test
@@ -45,7 +46,7 @@ class BeaconPayloadCodecTest {
     }
 
     @Test
-    fun `decode returns wrong length for non 21 byte payloads`() {
+    fun `decode returns wrong length for non 21 or 23 byte payloads`() {
         val result = BeaconPayloadCodec.decode(ByteArray(20))
 
         assertEquals(
@@ -57,12 +58,47 @@ class BeaconPayloadCodecTest {
     @Test
     fun `decode returns unsupported protocol version for incompatible payload`() {
         val payload = BeaconPayloadCodec.encode(validConfig()).copyOf()
-        payload[0] = 2
+        payload[0] = 99.toByte()
 
         val result = BeaconPayloadCodec.decode(payload)
 
         assertEquals(
             PayloadDecodeResult.Invalid(InvalidPayloadReason.UNSUPPORTED_PROTOCOL_VERSION),
+            result,
+        )
+    }
+
+    @Test
+    fun `decode supports legacy v1 payload without azimuth`() {
+        val legacyPayload = ByteBuffer
+            .allocate(BeaconProtocol.V1_PAYLOAD_LENGTH)
+            .order(ByteOrder.BIG_ENDIAN)
+            .put(BeaconProtocol.PROTOCOL_VERSION_V1)
+            .putLong(UUID.fromString("123e4567-e89b-12d3-a456-426614174000").mostSignificantBits)
+            .putLong(UUID.fromString("123e4567-e89b-12d3-a456-426614174000").leastSignificantBits)
+            .put(PointType.CROSSWALK.code.toByte())
+            .put(Priority.MEDIUM.code.toByte())
+            .putShort(1)
+            .array()
+
+        val result = BeaconPayloadCodec.decode(legacyPayload)
+
+        assertTrue(result is PayloadDecodeResult.Success)
+        val payload = (result as PayloadDecodeResult.Success).payload
+        assertEquals(1, payload.protocolVersion)
+        assertEquals(null, payload.azimuthDegrees)
+    }
+
+    @Test
+    fun `decode rejects invalid azimuth in v2 payload`() {
+        val payload = BeaconPayloadCodec.encode(validConfig()).copyOf()
+        payload[21] = 0x01
+        payload[22] = 0x90.toByte()
+
+        val result = BeaconPayloadCodec.decode(payload)
+
+        assertEquals(
+            PayloadDecodeResult.Invalid(InvalidPayloadReason.INVALID_AZIMUTH),
             result,
         )
     }
@@ -102,9 +138,9 @@ class BeaconPayloadCodecTest {
             pointType = PointType.CROSSWALK,
             priority = Priority.MEDIUM,
             messageCode = 1,
+            azimuthDegrees = 90,
             isActive = false,
             lastUpdatedAt = 0L,
         )
     }
 }
-

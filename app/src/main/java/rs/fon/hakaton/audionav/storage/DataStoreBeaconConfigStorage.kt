@@ -30,6 +30,7 @@ class DataStoreBeaconConfigStorage(
             preferences[BEACON_POINT_TYPE_CODE] = config.pointType.code
             preferences[BEACON_PRIORITY_CODE] = config.priority.code
             preferences[BEACON_MESSAGE_CODE] = config.messageCode.toInt()
+            preferences[BEACON_AZIMUTH_DEGREES] = config.azimuthDegrees
             preferences[BEACON_LAST_UPDATED_AT] = config.lastUpdatedAt
             preferences[BEACON_IS_ACTIVE] = config.isActive
         }
@@ -45,6 +46,7 @@ class DataStoreBeaconConfigStorage(
         val priority = Priority.fromCode(preferences[BEACON_PRIORITY_CODE] ?: return null)
             ?: return null
         val messageCode = (preferences[BEACON_MESSAGE_CODE] ?: return null).toShort()
+        val azimuthDegrees = preferences[BEACON_AZIMUTH_DEGREES] ?: return null
         val lastUpdatedAt = preferences[BEACON_LAST_UPDATED_AT] ?: return null
         val isActive = preferences[BEACON_IS_ACTIVE] ?: return null
 
@@ -54,6 +56,7 @@ class DataStoreBeaconConfigStorage(
             pointType = pointType,
             priority = priority,
             messageCode = messageCode,
+            azimuthDegrees = azimuthDegrees,
             isActive = isActive,
             lastUpdatedAt = lastUpdatedAt,
         )
@@ -83,8 +86,8 @@ class DataStoreBeaconConfigStorage(
         private val BEACON_POINT_TYPE_CODE = intPreferencesKey("beacon_point_type_code")
         private val BEACON_PRIORITY_CODE = intPreferencesKey("beacon_priority_code")
         private val BEACON_MESSAGE_CODE = intPreferencesKey("beacon_message_code")
+        private val BEACON_AZIMUTH_DEGREES = intPreferencesKey("beacon_azimuth_degrees")
         private val BEACON_LAST_UPDATED_AT = longPreferencesKey("beacon_last_updated_at")
         private val BEACON_IS_ACTIVE = booleanPreferencesKey("beacon_is_active")
     }
 }
-

@@ -22,11 +22,17 @@ import rs.fon.hakaton.audionav.domain.AnnouncementArbitrationResult
 import rs.fon.hakaton.audionav.domain.AnnouncementCandidate
 import rs.fon.hakaton.audionav.domain.AppMode
 import rs.fon.hakaton.audionav.domain.AppUiState
+import rs.fon.hakaton.audionav.domain.DirectionConfidence
+import rs.fon.hakaton.audionav.domain.DirectionEstimator
+import rs.fon.hakaton.audionav.domain.DirectionLabel
+import rs.fon.hakaton.audionav.domain.DirectionPromptBuilder
 import rs.fon.hakaton.audionav.domain.BeaconConfig
 import rs.fon.hakaton.audionav.domain.BeaconConfigValidator
 import rs.fon.hakaton.audionav.domain.BeaconScreenState
 import rs.fon.hakaton.audionav.domain.BluetoothStatus
 import rs.fon.hakaton.audionav.domain.DetectedBeaconEvent
+import rs.fon.hakaton.audionav.domain.HeadingEstimate
+import rs.fon.hakaton.audionav.domain.HeadingSensorController
 import rs.fon.hakaton.audionav.domain.MessageCatalog
 import rs.fon.hakaton.audionav.domain.PermissionStatus
 import rs.fon.hakaton.audionav.domain.PermissionUiState
@@ -37,6 +43,7 @@ import rs.fon.hakaton.audionav.domain.ReceiverScreenState
 import rs.fon.hakaton.audionav.domain.RssiRejectionReason
 import rs.fon.hakaton.audionav.domain.RssiStabilizationResult
 import rs.fon.hakaton.audionav.domain.RssiStabilizer
+import rs.fon.hakaton.audionav.domain.toDisplayText as directionConfidenceToDisplayText
 import rs.fon.hakaton.audionav.storage.BeaconConfigStorage
 import rs.fon.hakaton.audionav.storage.CooldownCheckResult
 import rs.fon.hakaton.audionav.storage.CooldownRepository
@@ -52,6 +59,7 @@ class AppViewModel(
     private val beaconScannerController: BeaconScannerController,
     private val cooldownRepository: CooldownRepository,
     private val rssiStabilizer: RssiStabilizer,
+    private val headingSensorController: HeadingSensorController,
     private val ttsAnnouncer: TtsAnnouncer,
     private val announcementArbiter: AnnouncementArbiter = AnnouncementArbiter(),
     private val timeProvider: () -> Long = { System.currentTimeMillis() },
@@ -63,7 +71,11 @@ class AppViewModel(
     private var receiverRetryJob: Job? = null
     private var receiverAutoRestartAllowed: Boolean = false
     private var announcementGapJob: Job? = null
+    private var headingPollingJob: Job? = null
     private var announcementGapUntilMs: Long? = null
+    private var latestHeadingEstimate: HeadingEstimate? = null
+    private var beaconScreenVisible: Boolean = false
+    private var receiverScreenVisible: Boolean = false
 
     init {
         ttsAnnouncer.initialize(
@@ -102,6 +114,16 @@ class AppViewModel(
         _uiState.update { currentState ->
             currentState.copy(selectedMode = mode)
         }
+    }
+
+    fun onBeaconScreenVisibilityChanged(visible: Boolean) {
+        beaconScreenVisible = visible
+        syncHeadingSensorLifecycle()
+    }
+
+    fun onReceiverScreenVisibilityChanged(visible: Boolean) {
+        receiverScreenVisible = visible
+        syncHeadingSensorLifecycle()
     }
 
     fun onRefreshPermissionStateRequested() {
@@ -173,6 +195,7 @@ class AppViewModel(
                         selectedPointType = persistedConfig.pointType,
                         selectedPriority = persistedConfig.priority,
                         selectedMessageCode = persistedConfig.messageCode,
+                        azimuthInput = persistedConfig.azimuthDegrees.toString(),
                         availableMessages = loadedMessages,
                         isAdvertising = false,
                         errorText = null,
@@ -234,6 +257,54 @@ class AppViewModel(
             } else {
                 currentState
             }
+        }
+    }
+
+    fun onBeaconAzimuthChanged(value: String) {
+        if (value.isNotEmpty() && value.any { !it.isDigit() }) {
+            return
+        }
+        updateBeaconDraft { currentState ->
+            currentState.copy(
+                azimuthInput = value,
+                errorText = null,
+            )
+        }
+    }
+
+    fun onBeaconAdjustAzimuth(deltaDegrees: Int) {
+        updateBeaconDraft { currentState ->
+            val currentAzimuth = currentState.azimuthInput.toIntOrNull() ?: 0
+            val adjusted = ((currentAzimuth + deltaDegrees) % 360 + 360) % 360
+            currentState.copy(
+                azimuthInput = adjusted.toString(),
+                errorText = null,
+            )
+        }
+    }
+
+    fun onCalibrateBeaconAzimuth() {
+        val headingEstimate = latestHeadingEstimate
+        if (headingEstimate == null || headingEstimate.confidence != DirectionConfidence.HIGH) {
+            _uiState.update { state ->
+                state.copy(
+                    beaconState = recomputeBeaconState(
+                        state,
+                        state.beaconState.copy(
+                            errorText = "Smer telefona nije dovoljno stabilan za kalibraciju.",
+                        ),
+                        allowReadyStatus = false,
+                    ),
+                )
+            }
+            return
+        }
+
+        updateBeaconDraft { currentState ->
+            currentState.copy(
+                azimuthInput = headingEstimate.headingDegrees.toString(),
+                errorText = null,
+            )
         }
     }
 
@@ -407,6 +478,9 @@ class AppViewModel(
                         lastGateDecisionText = null,
                         lastEligibleForAnnouncement = null,
                         lastArbitrationDecisionText = null,
+                        lastRelativeAngleDegrees = null,
+                        lastDirectionLabel = DirectionLabel.UNKNOWN,
+                        directionFallbackReason = null,
                     ),
                 ),
             )
@@ -510,7 +584,7 @@ class AppViewModel(
             pointType = event.payload.pointType,
             messageCode = event.payload.messageCode,
         )
-        val decodedText = message?.ttsText ?: UNKNOWN_LOCAL_MESSAGE_TEXT
+        val decodedText = message?.genericTtsText ?: UNKNOWN_LOCAL_MESSAGE_TEXT
 
         AppLogger.d(
             LogTag.BLE_SCAN,
@@ -601,14 +675,13 @@ class AppViewModel(
                     LogTag.RSSI,
                     "Stable beaconId=${event.payload.beaconId}, messageCode=${event.payload.messageCode}, rssi=${event.rssi}, smoothedRssi=${stabilizationResult.smoothedRssi}",
                 )
-                handleStableBeacon(stabilizationResult, decodedText)
+                handleStableBeacon(stabilizationResult)
             }
         }
     }
 
     private fun handleStableBeacon(
         result: RssiStabilizationResult.Stable,
-        decodedText: String,
     ) {
         viewModelScope.launch {
             val messageDefinition = MessageCatalog.resolve(
@@ -664,8 +737,9 @@ class AppViewModel(
                 messageCode = result.payload.messageCode,
                 pointType = result.payload.pointType,
                 priority = result.payload.priority,
-                ttsText = messageDefinition.ttsText,
-                decodedText = decodedText,
+                protocolVersion = result.payload.protocolVersion,
+                azimuthDegrees = result.payload.azimuthDegrees,
+                messageDefinition = messageDefinition,
                 detectedAt = result.detectedAt,
                 smoothedRssi = result.smoothedRssi,
             )
@@ -781,10 +855,12 @@ class AppViewModel(
         arbitrationText: String,
         preserveLastDetection: Boolean = false,
     ) {
+        val directionResolution = resolveDirectionResolution(candidate)
+        val resolvedText = directionResolution.resolvedText
         val utteranceId = "audionav-${UUID.randomUUID()}"
         when (
             val speakResult = ttsAnnouncer.announce(
-                text = candidate.ttsText,
+                text = resolvedText,
                 utteranceId = utteranceId,
             )
         ) {
@@ -794,7 +870,7 @@ class AppViewModel(
                     LogTag.TTS,
                     "TTS queued beaconId=${candidate.beaconId}, messageCode=${candidate.messageCode}, utteranceId=$utteranceId",
                 )
-                announcementArbiter.onAnnouncementQueued(candidate, utteranceId)
+                announcementArbiter.onAnnouncementQueued(candidate, utteranceId, resolvedText)
                 viewModelScope.launch {
                     persistReceiverDecision(
                         payload = candidate.toPayload(),
@@ -805,8 +881,12 @@ class AppViewModel(
                         arbitrationText = arbitrationText,
                         preserveLastDetection = preserveLastDetection,
                         announcedAt = announcedAt,
-                        spokenText = candidate.ttsText,
+                        spokenText = resolvedText,
                         spokenAt = announcedAt,
+                        resolvedText = resolvedText,
+                        directionLabel = directionResolution.estimate.direction,
+                        relativeAngleDegrees = directionResolution.estimate.relativeAngleDegrees,
+                        directionFallbackReason = directionResolution.fallbackReason,
                     )
                 }
             }
@@ -826,6 +906,10 @@ class AppViewModel(
                         arbitrationText = "Kandidat nije mogao da bude zakazan u TTS.",
                         preserveLastDetection = preserveLastDetection,
                         ttsError = speakResult.message,
+                        resolvedText = resolvedText,
+                        directionLabel = directionResolution.estimate.direction,
+                        relativeAngleDegrees = directionResolution.estimate.relativeAngleDegrees,
+                        directionFallbackReason = directionResolution.fallbackReason,
                     )
                 }
             }
@@ -845,10 +929,63 @@ class AppViewModel(
                         arbitrationText = "Kandidat nije mogao da bude zakazan u TTS.",
                         preserveLastDetection = preserveLastDetection,
                         ttsError = speakResult.message,
+                        resolvedText = resolvedText,
+                        directionLabel = directionResolution.estimate.direction,
+                        relativeAngleDegrees = directionResolution.estimate.relativeAngleDegrees,
+                        directionFallbackReason = directionResolution.fallbackReason,
                     )
                 }
             }
         }
+    }
+
+    private fun resolveDirectionResolution(
+        candidate: AnnouncementCandidate,
+    ): DirectionResolution {
+        val headingEstimate = currentHeadingEstimate()
+        val directionEstimate = DirectionEstimator.estimate(
+            beaconAzimuthDegrees = candidate.azimuthDegrees,
+            userHeadingDegrees = headingEstimate?.headingDegrees,
+            headingConfidence = headingEstimate?.confidence ?: DirectionConfidence.LOW,
+        )
+        val resolvedText = DirectionPromptBuilder.buildTtsText(
+            definition = candidate.messageDefinition,
+            directionEstimate = directionEstimate,
+        )
+        val fallbackReason = when {
+            directionEstimate.direction != DirectionLabel.UNKNOWN -> null
+            candidate.azimuthDegrees == null -> "Koriscena je genericka poruka jer beacon ne sadrzi azimut."
+            headingEstimate == null -> "Koriscena je genericka poruka jer heading jos nije dostupan."
+            headingEstimate.confidence != DirectionConfidence.HIGH -> {
+                "Koriscena je genericka poruka jer heading nije bio stabilan."
+            }
+
+            else -> "Koriscena je genericka poruka jer smer nije mogao da se odredi."
+        }
+
+        return DirectionResolution(
+            estimate = directionEstimate,
+            resolvedText = resolvedText,
+            fallbackReason = fallbackReason,
+        )
+    }
+
+    private fun buildPendingAnnouncementPreview(candidate: AnnouncementCandidate): String {
+        val directionEstimate = DirectionEstimator.estimate(
+            beaconAzimuthDegrees = candidate.azimuthDegrees,
+            userHeadingDegrees = currentHeadingEstimate()?.headingDegrees,
+            headingConfidence = currentHeadingEstimate()?.confidence ?: DirectionConfidence.LOW,
+        )
+        return DirectionPromptBuilder.buildUiText(candidate.messageDefinition, directionEstimate)
+    }
+
+    private fun currentHeadingEstimate(): HeadingEstimate? {
+        val liveEstimate = headingSensorController.latestEstimate()
+        if (liveEstimate != null) {
+            latestHeadingEstimate = liveEstimate
+            return liveEstimate
+        }
+        return latestHeadingEstimate
     }
 
     private fun handleTtsPlaybackEvent(event: TtsPlaybackEvent) {
@@ -998,6 +1135,10 @@ class AppViewModel(
         announcedAt: Long = detectedAt,
         spokenText: String? = null,
         spokenAt: Long? = null,
+        resolvedText: String? = null,
+        directionLabel: DirectionLabel? = null,
+        relativeAngleDegrees: Int? = null,
+        directionFallbackReason: String? = null,
     ) {
         val detectedEvent = DetectedBeaconEvent(
             beaconId = payload.beaconId,
@@ -1018,9 +1159,13 @@ class AppViewModel(
                 lastAnnouncementAt = if (wasAnnounced) announcedAt else state.receiverState.lastAnnouncementAt,
                 recentEvents = recentEvents,
                 lastTtsError = ttsError,
+                lastDecodedText = resolvedText ?: state.receiverState.lastDecodedText,
                 lastSpokenText = spokenText ?: state.receiverState.lastSpokenText,
                 lastSpokenAt = spokenAt ?: state.receiverState.lastSpokenAt,
                 lastArbitrationDecisionText = arbitrationText,
+                lastDirectionLabel = directionLabel ?: state.receiverState.lastDirectionLabel,
+                lastRelativeAngleDegrees = relativeAngleDegrees ?: state.receiverState.lastRelativeAngleDegrees,
+                directionFallbackReason = directionFallbackReason,
             )
 
             state.copy(
@@ -1140,6 +1285,9 @@ class AppViewModel(
                         lastGateDecisionText = null,
                         lastEligibleForAnnouncement = null,
                         lastArbitrationDecisionText = null,
+                        lastRelativeAngleDegrees = null,
+                        lastDirectionLabel = DirectionLabel.UNKNOWN,
+                        directionFallbackReason = null,
                     ),
                 ),
             )
@@ -1184,6 +1332,44 @@ class AppViewModel(
         }
     }
 
+    private fun syncHeadingSensorLifecycle() {
+        val shouldRun = beaconScreenVisible || receiverScreenVisible
+        if (shouldRun) {
+            headingSensorController.start()
+            if (headingPollingJob == null) {
+                headingPollingJob = viewModelScope.launch {
+                    while (true) {
+                        refreshHeadingSnapshot()
+                        delay(250L)
+                    }
+                }
+            } else {
+                refreshHeadingSnapshot()
+            }
+        } else {
+            headingPollingJob?.cancel()
+            headingPollingJob = null
+            headingSensorController.stop()
+            latestHeadingEstimate = null
+            _uiState.update { state ->
+                state.copy(
+                    beaconState = recomputeBeaconState(state, state.beaconState),
+                    receiverState = recomputeReceiverState(state, state.receiverState),
+                )
+            }
+        }
+    }
+
+    private fun refreshHeadingSnapshot() {
+        latestHeadingEstimate = headingSensorController.latestEstimate()
+        _uiState.update { state ->
+            state.copy(
+                beaconState = recomputeBeaconState(state, state.beaconState),
+                receiverState = recomputeReceiverState(state, state.receiverState),
+            )
+        }
+    }
+
     private fun createInitialUiState(): AppUiState {
         val initialBeaconState = BeaconScreenState(
             beaconId = UUID.randomUUID().toString(),
@@ -1218,6 +1404,7 @@ class AppViewModel(
                 pointType = beaconState.selectedPointType,
                 priority = beaconState.selectedPriority,
                 messageCode = beaconState.selectedMessageCode,
+                azimuthDegrees = beaconState.azimuthInput.toIntOrNull() ?: -1,
                 isActive = beaconState.isAdvertising,
                 lastUpdatedAt = System.currentTimeMillis(),
             ),
@@ -1238,6 +1425,9 @@ class AppViewModel(
             advertiserSupported = advertiserSupported,
             isReady = isReady,
             statusText = statusText,
+            currentHeadingDegrees = latestHeadingEstimate?.headingDegrees,
+            headingConfidenceText = latestHeadingEstimate?.confidence?.let { it.directionConfidenceToDisplayText() }
+                ?: DirectionConfidence.LOW.directionConfidenceToDisplayText(),
         )
     }
 
@@ -1261,14 +1451,17 @@ class AppViewModel(
             isReady = isReady,
             statusText = statusText,
             currentAnnouncementBeaconId = announcementArbiter.currentActive()?.candidate?.beaconId,
-            currentAnnouncementText = announcementArbiter.currentActive()?.candidate?.ttsText,
+            currentAnnouncementText = announcementArbiter.currentActive()?.spokenText,
             currentAnnouncementPriority = announcementArbiter.currentActive()?.candidate?.priority,
             currentAnnouncementRssi = announcementArbiter.currentActive()?.candidate?.smoothedRssi,
             pendingAnnouncementBeaconId = announcementArbiter.currentPending()?.beaconId,
-            pendingAnnouncementText = announcementArbiter.currentPending()?.ttsText,
+            pendingAnnouncementText = announcementArbiter.currentPending()?.let(::buildPendingAnnouncementPreview),
             pendingAnnouncementPriority = announcementArbiter.currentPending()?.priority,
             pendingAnnouncementRssi = announcementArbiter.currentPending()?.smoothedRssi,
             globalAnnouncementGapUntil = announcementGapUntilMs,
+            currentHeadingDegrees = latestHeadingEstimate?.headingDegrees,
+            headingConfidenceText = latestHeadingEstimate?.confidence?.let { it.directionConfidenceToDisplayText() }
+                ?: DirectionConfidence.LOW.directionConfidenceToDisplayText(),
         )
     }
 
@@ -1280,6 +1473,7 @@ class AppViewModel(
             pointType = beaconState.selectedPointType,
             priority = beaconState.selectedPriority,
             messageCode = beaconState.selectedMessageCode,
+            azimuthDegrees = beaconState.azimuthInput.toIntOrNull() ?: -1,
             isActive = isActive,
             lastUpdatedAt = System.currentTimeMillis(),
         )
@@ -1309,6 +1503,8 @@ class AppViewModel(
     override fun onCleared() {
         cancelAnnouncementGap()
         announcementArbiter.clear()
+        headingPollingJob?.cancel()
+        headingSensorController.stop()
         super.onCleared()
         ttsAnnouncer.shutdown()
     }
@@ -1320,12 +1516,19 @@ class AppViewModel(
     }
 }
 
+private data class DirectionResolution(
+    val estimate: rs.fon.hakaton.audionav.domain.DirectionEstimate,
+    val resolvedText: String,
+    val fallbackReason: String?,
+)
+
 private fun AnnouncementCandidate.toPayload(): rs.fon.hakaton.audionav.domain.DecodedBeaconPayload {
     return rs.fon.hakaton.audionav.domain.DecodedBeaconPayload(
-        protocolVersion = 1,
+        protocolVersion = protocolVersion,
         beaconId = beaconId,
         pointType = pointType,
         priority = priority,
         messageCode = messageCode,
+        azimuthDegrees = azimuthDegrees,
     )
 }

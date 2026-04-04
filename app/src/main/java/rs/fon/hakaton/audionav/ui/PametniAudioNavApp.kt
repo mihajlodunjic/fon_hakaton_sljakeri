@@ -66,6 +66,12 @@ fun PametniAudioNavApp(
         }
 
         composable(AppDestination.BeaconConfig.route) {
+            DisposableEffect(Unit) {
+                viewModel.onBeaconScreenVisibilityChanged(true)
+                onDispose {
+                    viewModel.onBeaconScreenVisibilityChanged(false)
+                }
+            }
             BeaconScreen(
                 state = uiState.beaconState,
                 readinessMessage = uiState.readinessMessage,
@@ -74,12 +80,21 @@ fun PametniAudioNavApp(
                 onPointTypeSelected = viewModel::onBeaconPointTypeSelected,
                 onPrioritySelected = viewModel::onBeaconPrioritySelected,
                 onMessageSelected = viewModel::onBeaconMessageCodeSelected,
+                onAzimuthChanged = viewModel::onBeaconAzimuthChanged,
+                onAdjustAzimuth = viewModel::onBeaconAdjustAzimuth,
+                onCalibrateAzimuth = viewModel::onCalibrateBeaconAzimuth,
                 onStartClick = viewModel::onStartBeaconClick,
                 onStopClick = { viewModel.onStopClick(AppMode.BEACON) },
             )
         }
 
         composable(AppDestination.Receiver.route) {
+            DisposableEffect(Unit) {
+                viewModel.onReceiverScreenVisibilityChanged(true)
+                onDispose {
+                    viewModel.onReceiverScreenVisibilityChanged(false)
+                }
+            }
             ReceiverScreen(
                 state = uiState.receiverState,
                 readinessMessage = uiState.readinessMessage,

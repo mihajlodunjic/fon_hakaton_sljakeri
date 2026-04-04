@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material3.Button
@@ -47,6 +48,9 @@ fun BeaconScreen(
     onPointTypeSelected: (PointType) -> Unit,
     onPrioritySelected: (Priority) -> Unit,
     onMessageSelected: (Short) -> Unit,
+    onAzimuthChanged: (String) -> Unit,
+    onAdjustAzimuth: (Int) -> Unit,
+    onCalibrateAzimuth: () -> Unit,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
 ) {
@@ -100,6 +104,56 @@ fun BeaconScreen(
                 enabled = !state.isAdvertising,
                 singleLine = true,
             )
+
+            OutlinedTextField(
+                value = state.azimuthInput,
+                onValueChange = onAzimuthChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Azimut (0-359°)") },
+                enabled = !state.isAdvertising,
+                singleLine = true,
+            )
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Kalibracija smera",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text("Trenutni heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Pouzdanost heading-a: ${state.headingConfidenceText}")
+                    Text(azimuthPreviewText(state.azimuthInput))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { onAdjustAzimuth(-5) },
+                            enabled = !state.isAdvertising,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("-5°")
+                        }
+                        OutlinedButton(
+                            onClick = { onAdjustAzimuth(5) },
+                            enabled = !state.isAdvertising,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("+5°")
+                        }
+                    }
+                    Button(
+                        onClick = onCalibrateAzimuth,
+                        enabled = !state.isAdvertising,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Kalibrisi azimut prema trenutnom smeru telefona" },
+                    ) {
+                        Text("Kalibrisi prema trenutnom smeru telefona")
+                    }
+                }
+            }
 
             BeaconDropdownField(
                 label = "Tip tacke",
@@ -194,6 +248,17 @@ fun BeaconScreen(
             }
         }
     }
+}
+
+private fun azimuthPreviewText(azimuthInput: String): String {
+    val azimuth = azimuthInput.toIntOrNull() ?: return "Unesite azimut izmedju 0 i 359 stepeni."
+    val cardinal = when {
+        azimuth in 45..134 -> "Istok"
+        azimuth in 135..224 -> "Jug"
+        azimuth in 225..314 -> "Zapad"
+        else -> "Sever"
+    }
+    return "$azimuth° = $cardinal"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -85,6 +85,7 @@ class DataStoreBeaconConfigStorageTest {
             pointType = PointType.CROSSWALK,
             priority = Priority.MEDIUM,
             messageCode = 1,
+            azimuthDegrees = 90,
             isActive = isActive,
             lastUpdatedAt = 1234L,
         )
