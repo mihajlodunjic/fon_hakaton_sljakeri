@@ -1252,22 +1252,6 @@ class AppViewModel(
                 }
             }
 
-            is PendingAnnouncementResult.DroppedStale -> {
-                AppLogger.d(
-                    LogTag.TTS,
-                    "Pending candidate stale beaconId=${pendingResult.candidate.beaconId}, detectedAt=${pendingResult.candidate.detectedAt}",
-                )
-                persistReceiverDecision(
-                    payload = pendingResult.candidate.toPayload(),
-                    detectedAt = pendingResult.candidate.detectedAt,
-                    rssi = pendingResult.candidate.smoothedRssi,
-                    wasAnnounced = false,
-                    gateText = "Najava dozvoljena.",
-                    arbitrationText = "Kandidat je zastareo pre glasovne najave.",
-                    preserveLastDetection = true,
-                )
-            }
-
             is PendingAnnouncementResult.Ready -> {
                 AppLogger.d(
                     LogTag.TTS,

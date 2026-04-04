@@ -47,16 +47,11 @@ sealed interface PendingAnnouncementResult {
         val candidate: AnnouncementCandidate,
     ) : PendingAnnouncementResult
 
-    data class DroppedStale(
-        val candidate: AnnouncementCandidate,
-    ) : PendingAnnouncementResult
-
     data object None : PendingAnnouncementResult
 }
 
 class AnnouncementArbiter(
     private val samePriorityReplacementDeltaDbm: Int = SAME_PRIORITY_REPLACEMENT_DELTA_DBM,
-    private val pendingFreshnessWindowMs: Long = PENDING_FRESHNESS_WINDOW_MS,
 ) {
 
     private var activeAnnouncement: ActiveAnnouncement? = null
@@ -125,12 +120,7 @@ class AnnouncementArbiter(
     fun takePendingCandidate(now: Long): PendingAnnouncementResult {
         val currentPending = pendingCandidate ?: return PendingAnnouncementResult.None
         pendingCandidate = null
-
-        return if (now - currentPending.detectedAt > pendingFreshnessWindowMs) {
-            PendingAnnouncementResult.DroppedStale(currentPending)
-        } else {
-            PendingAnnouncementResult.Ready(currentPending)
-        }
+        return PendingAnnouncementResult.Ready(currentPending)
     }
 
     fun currentActive(): ActiveAnnouncement? = activeAnnouncement
@@ -178,6 +168,5 @@ class AnnouncementArbiter(
 
     companion object {
         const val SAME_PRIORITY_REPLACEMENT_DELTA_DBM: Int = 5
-        const val PENDING_FRESHNESS_WINDOW_MS: Long = 4_000L
     }
 }

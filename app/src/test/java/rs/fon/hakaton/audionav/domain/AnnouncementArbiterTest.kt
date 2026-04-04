@@ -58,7 +58,7 @@ class AnnouncementArbiterTest {
     }
 
     @Test
-    fun `pending candidate older than four seconds is dropped as stale`() {
+    fun `pending candidate remains available even after waiting longer than four seconds`() {
         val arbiter = AnnouncementArbiter()
         val pending = candidate(
             beaconId = "beacon-stale",
@@ -68,7 +68,7 @@ class AnnouncementArbiterTest {
 
         val result = arbiter.takePendingCandidate(now = 5_100L)
 
-        assertTrue(result is PendingAnnouncementResult.DroppedStale)
+        assertTrue(result is PendingAnnouncementResult.Ready)
         assertEquals(null, arbiter.currentPending())
     }
 

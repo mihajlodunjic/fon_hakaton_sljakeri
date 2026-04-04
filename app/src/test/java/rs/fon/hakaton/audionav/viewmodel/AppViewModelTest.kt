@@ -739,7 +739,7 @@ class AppViewModelTest {
     }
 
     @Test
-    fun `pending candidate older than four seconds is dropped before speech`() = runTest {
+    fun `pending candidate older than four seconds is still spoken when it reaches the front`() = runTest {
         val scanner = FakeBeaconScannerController()
         val ttsAnnouncer = FakeTtsAnnouncer()
         val clock = FakeClock()
@@ -787,10 +787,11 @@ class AppViewModelTest {
         advanceUntilIdle()
 
         val state = viewModel.uiState.value.receiverState
-        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals(2, ttsAnnouncer.announceCalls)
         assertEquals(null, state.pendingAnnouncementBeaconId)
-        assertEquals("Kandidat je zastareo pre glasovne najave.", state.lastArbitrationDecisionText)
-        assertEquals(false, state.recentEvents.first().wasAnnounced)
+        assertEquals("Stepenice su ispred vas.", ttsAnnouncer.announcedTexts.last())
+        assertEquals("Cekajuci kandidat je dosao na red za glasovnu najavu.", state.lastArbitrationDecisionText)
+        assertEquals(true, state.recentEvents.first().wasAnnounced)
     }
 
     @Test
