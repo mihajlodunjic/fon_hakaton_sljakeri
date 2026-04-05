@@ -41,17 +41,32 @@ object BeaconPayloadCodec {
         }
 
         val uuid = UUID.fromString(config.beaconId)
-        return ByteBuffer
-            .allocate(BeaconProtocol.V2_PAYLOAD_LENGTH)
+        val protocolVersion = if (config.azimuthDegrees != null) {
+            BeaconProtocol.PROTOCOL_VERSION_V2
+        } else {
+            BeaconProtocol.PROTOCOL_VERSION_V1
+        }
+        val buffer = ByteBuffer
+            .allocate(
+                if (protocolVersion == BeaconProtocol.PROTOCOL_VERSION_V2) {
+                    BeaconProtocol.V2_PAYLOAD_LENGTH
+                } else {
+                    BeaconProtocol.V1_PAYLOAD_LENGTH
+                },
+            )
             .order(ByteOrder.BIG_ENDIAN)
-            .put(BeaconProtocol.PROTOCOL_VERSION)
+            .put(protocolVersion)
             .putLong(uuid.mostSignificantBits)
             .putLong(uuid.leastSignificantBits)
             .put(config.pointType.code.toByte())
             .put(config.priority.code.toByte())
             .putShort(config.messageCode)
-            .putShort(config.azimuthDegrees.toShort())
-            .array()
+
+        if (protocolVersion == BeaconProtocol.PROTOCOL_VERSION_V2) {
+            buffer.putShort(config.azimuthDegrees!!.toShort())
+        }
+
+        return buffer.array()
     }
 
     fun decode(payload: ByteArray): PayloadDecodeResult {

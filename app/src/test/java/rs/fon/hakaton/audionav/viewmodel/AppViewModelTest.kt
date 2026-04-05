@@ -95,6 +95,30 @@ class AppViewModelTest {
     }
 
     @Test
+    fun `load persisted beacon config keeps blank azimuth when missing`() = runTest {
+        val storage = FakeBeaconConfigStorage(
+            storedConfig = BeaconConfig(
+                beaconId = "123e4567-e89b-12d3-a456-426614174000",
+                label = "Saved beacon",
+                pointType = PointType.ENTRANCE,
+                priority = Priority.MEDIUM,
+                messageCode = 4,
+                azimuthDegrees = null,
+                isActive = true,
+                lastUpdatedAt = 99L,
+            ),
+        )
+        val viewModel = createViewModel(storage = storage)
+
+        viewModel.loadPersistedBeaconConfig()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.beaconState
+        assertEquals("", state.azimuthInput)
+        assertEquals(false, state.isAdvertising)
+    }
+
+    @Test
     fun `on beacon point type selected refreshes available messages and first valid message code`() =
         runTest {
             val viewModel = createViewModel()
@@ -212,6 +236,21 @@ class AppViewModelTest {
         assertEquals(0, scanner.startCalls)
         assertEquals("Error", state.statusText)
         assertEquals("Uredaj ne podrzava BLE skeniranje.", state.errorText)
+    }
+
+    @Test
+    fun `beacon draft with blank azimuth is ready when other prerequisites are met`() = runTest {
+        val viewModel = createViewModel()
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.beaconState
+        assertEquals("", state.azimuthInput)
+        assertEquals(true, state.isReady)
+        assertEquals("Ready", state.statusText)
     }
 
     @Test
@@ -465,6 +504,42 @@ class AppViewModelTest {
         assertEquals(
             "Nema lokalne TTS poruke za ovaj beacon.",
             viewModel.uiState.value.receiverState.lastTtsError,
+        )
+    }
+
+    @Test
+    fun `receiver with missing azimuth speaks generic nearby message`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        calibrateReceiverDirection(viewModel)
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    pointType = PointType.ENTRANCE,
+                    messageCode = 4,
+                    rssi = -60,
+                    detectedAt = 1_100L + index,
+                    azimuthDegrees = null,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        val state = viewModel.uiState.value.receiverState
+        assertEquals("Ulaz u blizini.", state.lastDecodedText)
+        assertEquals("Ulaz u blizini.", state.lastSpokenText)
+        assertEquals(DirectionLabel.UNKNOWN, state.lastDirectionLabel)
+        assertEquals(
+            "Koriscena je genericka poruka jer beacon ne sadrzi azimut.",
+            state.directionFallbackReason,
         )
     }
 

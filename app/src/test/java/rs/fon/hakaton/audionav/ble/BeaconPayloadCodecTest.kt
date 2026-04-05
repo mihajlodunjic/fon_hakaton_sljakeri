@@ -90,6 +90,21 @@ class BeaconPayloadCodecTest {
     }
 
     @Test
+    fun `encode without azimuth uses v1 payload and decodes with null azimuth`() {
+        val config = validConfig(azimuthDegrees = null)
+
+        val encoded = BeaconPayloadCodec.encode(config)
+        val decoded = BeaconPayloadCodec.decode(encoded)
+
+        assertEquals(BeaconProtocol.V1_PAYLOAD_LENGTH, encoded.size)
+        assertEquals(BeaconProtocol.PROTOCOL_VERSION_V1, encoded.first())
+        assertTrue(decoded is PayloadDecodeResult.Success)
+        val payload = (decoded as PayloadDecodeResult.Success).payload
+        assertEquals(1, payload.protocolVersion)
+        assertEquals(null, payload.azimuthDegrees)
+    }
+
+    @Test
     fun `decode rejects invalid azimuth in v2 payload`() {
         val payload = BeaconPayloadCodec.encode(validConfig()).copyOf()
         payload[21] = 0x01
@@ -131,6 +146,7 @@ class BeaconPayloadCodecTest {
 
     private fun validConfig(
         beaconId: String = "123e4567-e89b-12d3-a456-426614174000",
+        azimuthDegrees: Int? = 90,
     ): BeaconConfig {
         return BeaconConfig(
             beaconId = beaconId,
@@ -138,7 +154,7 @@ class BeaconPayloadCodecTest {
             pointType = PointType.CROSSWALK,
             priority = Priority.MEDIUM,
             messageCode = 1,
-            azimuthDegrees = 90,
+            azimuthDegrees = azimuthDegrees,
             isActive = false,
             lastUpdatedAt = 0L,
         )

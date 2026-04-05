@@ -20,8 +20,10 @@ object BeaconConfigValidator {
             errors += BeaconConfigValidationError.MESSAGE_NOT_DEFINED_FOR_POINT_TYPE
         }
 
-        if (config.azimuthDegrees !in 0..359) {
-            errors += BeaconConfigValidationError.INVALID_AZIMUTH
+        config.azimuthDegrees?.let { azimuthDegrees ->
+            if (azimuthDegrees !in 0..359) {
+                errors += BeaconConfigValidationError.INVALID_AZIMUTH
+            }
         }
 
         return errors

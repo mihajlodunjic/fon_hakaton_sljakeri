@@ -42,7 +42,7 @@ data class BeaconConfig(
     val pointType: PointType,
     val priority: Priority,
     val messageCode: Short,
-    val azimuthDegrees: Int,
+    val azimuthDegrees: Int?,
     val isActive: Boolean,
     val lastUpdatedAt: Long,
 )

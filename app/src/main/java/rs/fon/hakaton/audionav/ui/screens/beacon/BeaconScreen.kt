@@ -108,7 +108,7 @@ fun BeaconScreen(
                 value = state.azimuthInput,
                 onValueChange = onAzimuthChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Lokalni ugao (0-359°)") },
+                label = { Text("Lokalni ugao (0-359\u00B0, opciono)") },
                 enabled = !state.isAdvertising,
                 singleLine = true,
             )
@@ -131,14 +131,14 @@ fun BeaconScreen(
                             enabled = !state.isAdvertising,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("-5°")
+                            Text("-5\u00B0")
                         }
                         OutlinedButton(
                             onClick = { onAdjustAzimuth(5) },
                             enabled = !state.isAdvertising,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("+5°")
+                            Text("+5\u00B0")
                         }
                     }
                 }
@@ -240,14 +240,15 @@ fun BeaconScreen(
 }
 
 private fun azimuthPreviewText(azimuthInput: String): String {
-    val azimuth = azimuthInput.toIntOrNull() ?: return "Unesite lokalni ugao izmedju 0 i 359 stepeni."
+    val azimuth = azimuthInput.toIntOrNull()
+        ?: return "Bez lokalnog ugla. Receiver ce koristiti genericku poruku u blizini."
     val localDirection = when {
         azimuth in 45..134 -> "desno od reference"
         azimuth in 135..224 -> "suprotno od reference"
         azimuth in 225..314 -> "levo od reference"
         else -> "referentni pravac"
     }
-    return "$azimuth° = $localDirection"
+    return "${azimuth}\u00B0 = $localDirection"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

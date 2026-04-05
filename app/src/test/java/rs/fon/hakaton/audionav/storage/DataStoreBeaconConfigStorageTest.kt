@@ -35,6 +35,16 @@ class DataStoreBeaconConfigStorageTest {
     }
 
     @Test
+    fun `save and load round-trip keeps null azimuth`() = runTest {
+        val storage = createStorage(backgroundScope)
+        val config = validConfig(azimuthDegrees = null)
+
+        storage.save(config)
+
+        assertEquals(config, storage.load())
+    }
+
+    @Test
     fun `load returns null for invalid partial preferences`() = runTest {
         val file = createTempDataStoreFile()
         val dataStore = PreferenceDataStoreFactory.create(
@@ -78,14 +88,17 @@ class DataStoreBeaconConfigStorageTest {
         return File(directory, "beacon.preferences_pb")
     }
 
-    private fun validConfig(isActive: Boolean = false): BeaconConfig {
+    private fun validConfig(
+        isActive: Boolean = false,
+        azimuthDegrees: Int? = 90,
+    ): BeaconConfig {
         return BeaconConfig(
             beaconId = "123e4567-e89b-12d3-a456-426614174000",
             label = "Crosswalk A",
             pointType = PointType.CROSSWALK,
             priority = Priority.MEDIUM,
             messageCode = 1,
-            azimuthDegrees = 90,
+            azimuthDegrees = azimuthDegrees,
             isActive = isActive,
             lastUpdatedAt = 1234L,
         )
