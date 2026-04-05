@@ -1,42 +1,44 @@
 package rs.fon.hakaton.audionav.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
-private val LightColors = lightColorScheme(
-    primary = InkBlue,
-    onPrimary = White,
-    secondary = SignalOrange,
-    onSecondary = InkBlueDark,
-    background = Sand,
-    onBackground = InkBlueDark,
-    surface = White,
-    onSurface = InkBlueDark,
-)
+// Uvek dark tema — crna pozadina + žuti akcenti = maksimalan kontrast (WCAG AAA)
+// Ne koristimo isSystemInDarkTheme() jer je visoki kontrast uvek bolji za ciljnu grupu
 
-private val DarkColors = darkColorScheme(
-    primary = SignalOrange,
-    onPrimary = InkBlueDark,
-    secondary = White,
-    onSecondary = InkBlueDark,
-    background = InkBlueDark,
-    onBackground = White,
-    surface = InkBlue,
-    onSurface = White,
+private val AccessibleDarkColors = darkColorScheme(
+    primary          = BrightYellow,    // dugmad, aktivni elementi
+    onPrimary        = DeepBlack,       // tekst na žutim dugmadima
+    primaryContainer = CardBackground,  // kontejneri
+    onPrimaryContainer = PureWhite,
+
+    secondary        = LightYellow,     // outlined dugmad, sekundarni akcenti
+    onSecondary      = DeepBlack,
+    secondaryContainer = CardBackground,
+    onSecondaryContainer = PureWhite,
+
+    background       = DeepBlack,       // pozadina ekrana
+    onBackground     = PureWhite,       // tekst na pozadini
+
+    surface          = CardBackground,  // kartice i surface elementi
+    onSurface        = PureWhite,       // tekst na karticama
+    surfaceVariant   = NearBlack,
+    onSurfaceVariant = PureWhite,
+
+    outline          = BrightYellow,    // border oko kartica i outlined dugmadi
+
+    error            = ErrorRed,
+    onError          = DeepBlack,
 )
 
 @Composable
 fun PametniAudioNavTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = AccessibleDarkColors,
         typography = AppTypography,
         content = content,
     )
 }
-

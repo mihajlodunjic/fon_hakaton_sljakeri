@@ -1,6 +1,7 @@
 package rs.fon.hakaton.audionav.ui.screens.receiver
 
 import android.view.MotionEvent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,9 +9,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -18,6 +22,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,9 +35,22 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import rs.fon.hakaton.audionav.domain.ReceiverScreenState
 import rs.fon.hakaton.audionav.domain.toDisplayText
+import rs.fon.hakaton.audionav.ui.theme.BrightYellow
+import rs.fon.hakaton.audionav.ui.theme.CardBackground
+import rs.fon.hakaton.audionav.ui.theme.DeepBlack
+import rs.fon.hakaton.audionav.ui.theme.ErrorRed
+import rs.fon.hakaton.audionav.ui.theme.LightYellow
+import rs.fon.hakaton.audionav.ui.theme.PureWhite
+import rs.fon.hakaton.audionav.ui.theme.ScanningGreen
+
+// ── Deljene konstante za dizajn ────────────────────────────────────────────────
+private val CardShape = RoundedCornerShape(12.dp)
+private val CardBorder = BorderStroke(2.dp, BrightYellow)
+private val ButtonShape = RoundedCornerShape(12.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,28 +65,37 @@ fun ReceiverScreen(
     onRepeatLastClick: () -> Unit,
     onTouchExploreControl: (String) -> Unit,
 ) {
-    val voiceAnnouncementStatus = when {
-        state.lastEligibleForAnnouncement != true &&
-            state.lastTtsError == null &&
-            state.lastSpokenAt == null -> "Nije pokusana"
-
-        state.lastTtsError != null -> "Nije zakazana"
-        state.lastEligibleForAnnouncement == true -> "Uspesno zakazana"
-        else -> "Ceka se ishod TTS-a"
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Receiver mod") },
+                title = {
+                    Text(
+                        text = "Receiver mod",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = BrightYellow,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
                 navigationIcon = {
                     TextButton(
                         onClick = onNavigateBack,
-                        modifier = Modifier.touchExplore("Nazad", onTouchExploreControl),
+                        modifier = Modifier
+                            .sizeIn(minHeight = 56.dp, minWidth = 80.dp)
+                            .touchExplore("Nazad", onTouchExploreControl)
+                            .semantics { contentDescription = "Nazad na prethodni ekran" },
                     ) {
-                        Text("Nazad")
+                        Text(
+                            text = "◀ Nazad",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = BrightYellow,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = DeepBlack,
+                    titleContentColor = BrightYellow,
+                ),
             )
         },
     ) { innerPadding ->
@@ -77,323 +104,339 @@ fun ReceiverScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics { contentDescription = "Kartica statusa receiver moda" },
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Status skeniranja",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("Stanje: ${state.statusText}")
-                    Text("Scanner podrzan: ${if (state.scannerSupported) "Da" else "Ne"}")
-                    Text(readinessMessage, style = MaterialTheme.typography.bodyMedium)
-                    state.errorText?.let { errorText ->
-                        Text(
-                            text = errorText,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    if (state.retryScheduled) {
-                        Text(
-                            text = "Retry skeniranja je zakazan za nekoliko sekundi.",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-            }
 
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics { contentDescription = "Kartica kalibracije smera" },
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Kalibracija smera",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("Raw heading: ${state.currentHeadingDegrees?.let(::formatDegrees) ?: "-"}")
-                    Text("Lokalni heading: ${state.localHeadingDegrees?.let(::formatDegrees) ?: "-"}")
-                    Text("Pouzdanost smera: ${state.headingConfidenceText}")
-                    Text("Status: ${state.directionCalibrationText}")
-                    Button(
-                        onClick = onCalibrateHeading,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .touchExplore("Postavi trenutni smer kao 0", onTouchExploreControl)
-                            .semantics { contentDescription = "Postavi trenutni smer kao nula stepeni" },
-                    ) {
-                        Text("Postavi trenutni smer kao 0\u00B0")
-                    }
-                    OutlinedButton(
-                        onClick = onResetHeadingCalibration,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .touchExplore("Resetuj kalibraciju", onTouchExploreControl)
-                            .semantics { contentDescription = "Resetuj kalibraciju smera" },
-                        enabled = state.isDirectionCalibrated,
-                    ) {
-                        Text("Resetuj kalibraciju")
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Poslednji signal",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = state.lastDecodedText
-                            ?: "Ovde ce se prikazivati poslednji validni beacon dogadjaj.",
-                    )
-                    Text("Beacon ID: ${state.lastDetectedBeaconId ?: "-"}")
-                    Text("Tip tacke: ${state.lastDetectedPointType?.displayName ?: "-"}")
-                    Text("Prioritet: ${state.lastDetectedPriority?.displayName ?: "-"}")
-                    Text("Kod poruke: ${state.lastDetectedMessageCode?.toString() ?: "-"}")
-                    Text("RSSI: ${state.lastRssi?.toString() ?: "-"}")
-                    Text("Detektovano u: ${state.lastDetectedAt?.toString() ?: "-"}")
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Smer i heading",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("Raw heading: ${state.currentHeadingDegrees?.let(::formatDegrees) ?: "-"}")
-                    Text("Lokalni heading: ${state.localHeadingDegrees?.let(::formatDegrees) ?: "-"}")
-                    Text("Pouzdanost smera: ${state.headingConfidenceText}")
-                    Text("Smer objekta: ${state.lastDirectionLabel.toDisplayText()}")
-                    Text(
-                        "Relativni ugao: ${state.lastRelativeAngleDegrees?.let(::formatRelativeAngle) ?: "-"}",
-                    )
-                    state.directionFallbackReason?.let { fallbackReason ->
-                        Text(fallbackReason, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Behind potvrda prolaska",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("Praceni beacon: ${state.behindPassTrackingBeaconId ?: "-"}")
-                    Text("RSSI trend: ${state.behindPassSampleCount}/6 uzoraka")
-                    Text(
-                        state.behindPassStatusText
-                            ?: "Nema aktivnog behind pracenja prolaska.",
-                    )
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Stabilizacija",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("${state.stabilizationProgress}/${state.requiredStabilizationCount} iznad ${state.rssiThreshold} dBm")
-                    Text(
-                        state.lastGateDecisionText
-                            ?: "Ceka se dovoljan broj uzastopnih validnih RSSI ocitavanja.",
-                    )
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Cooldown i odluka",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        when (state.lastEligibleForAnnouncement) {
-                            true -> "Najava dozvoljena po gate-u."
-                            false -> "Najava trenutno nije dozvoljena po gate-u."
-                            null -> "Gate odluka jos nije doneta."
-                        },
-                    )
-                    Text("Poslednja dozvoljena najava: ${state.lastAnnouncementAt?.toString() ?: "-"}")
-                    Text("Glasovna najava: $voiceAnnouncementStatus")
-                    Text(
-                        state.lastGateDecisionText
-                            ?: "Cooldown odluka ce biti prikazana kada signal postane stabilan.",
-                    )
-                    Text(
-                        state.lastArbitrationDecisionText
-                            ?: "Arbitraza prioriteta i blizine jos nije aktivirana.",
-                    )
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Scheduler najava",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("Trenutno govori beacon: ${state.currentAnnouncementBeaconId ?: "-"}")
-                    Text("Tekst trenutne najave: ${state.currentAnnouncementText ?: "-"}")
-                    Text("Prioritet trenutne najave: ${state.currentAnnouncementPriority?.displayName ?: "-"}")
-                    Text("Stabilizovan RSSI trenutne najave: ${state.currentAnnouncementRssi?.toString() ?: "-"}")
-                    Text("Cekajuci beacon: ${state.pendingAnnouncementBeaconId ?: "-"}")
-                    Text("Tekst cekajuce najave: ${state.pendingAnnouncementText ?: "-"}")
-                    Text("Prioritet cekajuce najave: ${state.pendingAnnouncementPriority?.displayName ?: "-"}")
-                    Text("Stabilizovan RSSI cekajuce najave: ${state.pendingAnnouncementRssi?.toString() ?: "-"}")
-                    Text("Globalni gap aktivan do: ${state.globalAnnouncementGapUntil?.toString() ?: "-"}")
-                }
-            }
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics { contentDescription = "Kartica TTS statusa" },
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "TTS status",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("Status: ${state.ttsStatusText}")
-                    Text("Poslednja izgovorena poruka: ${state.lastSpokenText ?: "-"}")
-                    Text("Poslednja glasovna najava u: ${state.lastSpokenAt?.toString() ?: "-"}")
-                    state.lastTtsError?.let { ttsError ->
-                        Text(
-                            text = ttsError,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-            }
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Skorasnji dogadjaji",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    if (state.recentEvents.isEmpty()) {
-                        Text("Jos nema stabilizovanih receiver odluka.")
-                    } else {
-                        state.recentEvents.take(5).forEach { event ->
-                            Text(
-                                text = buildString {
-                                    append(event.beaconId)
-                                    append(" | msg=")
-                                    append(event.messageCode)
-                                    append(" | RSSI=")
-                                    append(event.rssi)
-                                    append(" | allowed=")
-                                    append(if (event.wasAnnounced) "da" else "ne")
-                                    append(" | at=")
-                                    append(event.detectedAt)
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-                    }
-                }
-            }
-
-            Button(
+            // ── 1. GLAVNA AKCIJSKA DUGMAD (na vrhu — najvažnije za korisnike) ──
+            ReceiverPrimaryButton(
+                text = if (state.isScanning) "⏺  Skeniranje aktivno..." else "▶  Pokreni skeniranje",
+                contentDesc = if (state.isScanning) "Skeniranje je trenutno aktivno" else "Pokreni receiver skeniranje",
                 onClick = onStartClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .touchExplore("Pokreni skeniranje", onTouchExploreControl)
-                    .semantics { contentDescription = "Pokreni receiver skeniranje" }
-                    .sizeIn(minHeight = 56.dp),
                 enabled = state.isReady && !state.isScanning && state.scannerSupported,
-            ) {
-                Text("Pokreni skeniranje")
-            }
+                isActive = state.isScanning,
+                onTouchExplore = { onTouchExploreControl("Pokreni skeniranje") },
+                minHeight = 80.dp,
+            )
 
-            OutlinedButton(
-                onClick = onRepeatLastClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .touchExplore("Procitaj opet poslednju poruku", onTouchExploreControl)
-                    .semantics { contentDescription = "Procitaj opet poslednju glasovnu poruku" }
-                    .sizeIn(minHeight = 56.dp),
-                enabled = state.lastSpokenText != null,
-            ) {
-                Text("Procitaj opet poslednju poruku")
-            }
-
-            OutlinedButton(
+            ReceiverOutlinedButton(
+                text = "⏹  Zaustavi skeniranje",
+                contentDesc = "Zaustavi receiver skeniranje",
                 onClick = onStopClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .touchExplore("Zaustavi", onTouchExploreControl)
-                    .semantics { contentDescription = "Zaustavi receiver skeniranje" }
-                    .sizeIn(minHeight = 56.dp),
                 enabled = state.isScanning || state.retryScheduled,
+                onTouchExplore = { onTouchExploreControl("Zaustavi") },
+            )
+
+            ReceiverOutlinedButton(
+                text = "🔁  Ponovi poslednju poruku",
+                contentDesc = "Pročitaj ponovo poslednju glasovnu poruku: ${state.lastSpokenText ?: "nema poruke"}",
+                onClick = onRepeatLastClick,
+                enabled = state.lastSpokenText != null,
+                onTouchExplore = { onTouchExploreControl("Procitaj opet poslednju poruku") },
+            )
+
+            // ── 2. STATUS SKENIRANJA ────────────────────────────────────────────
+            AccessibleCard(
+                contentDesc = "Status skeniranja: ${state.statusText}",
             ) {
-                Text("Zaustavi")
+                CardLabel("Status skeniranja")
+                CardRow("Stanje", state.statusText)
+                CardRow(
+                    label = "Scanner",
+                    value = if (state.scannerSupported) "Podržan ✓" else "Nije podržan ✗",
+                    valueColor = if (state.scannerSupported) ScanningGreen else ErrorRed,
+                )
+                CardRow("Uređaj", readinessMessage)
+
+                state.errorText?.let { err ->
+                    Text(
+                        text = "⚠ $err",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = ErrorRed,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                if (state.retryScheduled) {
+                    Text(
+                        text = "⏳ Retry skeniranja je zakazan...",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = LightYellow,
+                    )
+                }
+            }
+
+            // ── 3. POSLEDNJI SIGNAL ─────────────────────────────────────────────
+            val lastSignalDesc = buildString {
+                append("Poslednji signal. ")
+                append(state.lastDecodedText ?: "Nema signala.")
+                state.lastDetectedPointType?.let { append(" Tip: ${it.displayName}.") }
+                state.lastDetectedPriority?.let { append(" Prioritet: ${it.displayName}.") }
+                state.lastRssi?.let { append(" Jačina signala: $it.") }
+            }
+
+            AccessibleCard(contentDesc = lastSignalDesc) {
+                CardLabel("Poslednji signal")
+                Text(
+                    text = state.lastDecodedText
+                        ?: "Čeka se beacon signal...",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (state.lastDecodedText != null) ScanningGreen else PureWhite.copy(alpha = 0.6f),
+                    fontWeight = if (state.lastDecodedText != null) FontWeight.Bold else FontWeight.Normal,
+                )
+                if (state.lastDetectedBeaconId != null) {
+                    CardRow("Beacon ID", state.lastDetectedBeaconId.toString())
+                    state.lastDetectedPointType?.let { CardRow("Tip tačke", it.displayName) }
+                    state.lastDetectedPriority?.let { CardRow("Prioritet", it.displayName) }
+                    state.lastRssi?.let { CardRow("Jačina signala (RSSI)", "$it dBm") }
+                }
+            }
+
+            // ── 4. SMER ─────────────────────────────────────────────────────────
+            val directionDesc = buildString {
+                append("Smer kretanja. ")
+                append("Smer objekta: ${state.lastDirectionLabel.toDisplayText()}. ")
+                state.localHeadingDegrees?.let { append("Ugao: $it stepeni.") }
+            }
+
+            AccessibleCard(contentDesc = directionDesc) {
+                CardLabel("Smer")
+                CardRow(
+                    label = "Smer objekta",
+                    value = state.lastDirectionLabel.toDisplayText(),
+                    valueColor = BrightYellow,
+                )
+                CardRow(
+                    label = "Ugao",
+                    value = state.localHeadingDegrees?.let { formatDegrees(it) } ?: "-",
+                )
+                CardRow("Pouzdanost", state.headingConfidenceText)
+                state.directionFallbackReason?.let {
+                    Text(
+                        text = "ℹ $it",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LightYellow,
+                    )
+                }
+            }
+
+            // ── 5. KALIBRACIJA SMERA ────────────────────────────────────────────
+            AccessibleCard(
+                contentDesc = "Kalibracija smera. Status: ${state.directionCalibrationText}",
+            ) {
+                CardLabel("Kalibracija smera")
+                CardRow("Status", state.directionCalibrationText)
+                CardRow(
+                    label = "Heading",
+                    value = state.currentHeadingDegrees?.let { formatDegrees(it) } ?: "-",
+                )
+
+                ReceiverPrimaryButton(
+                    text = "🧭  Postavi smer kao 0°",
+                    contentDesc = "Postavi trenutni smer kao nula stepeni",
+                    onClick = onCalibrateHeading,
+                    enabled = true,
+                    onTouchExplore = { onTouchExploreControl("Postavi trenutni smer kao 0") },
+                )
+
+                ReceiverOutlinedButton(
+                    text = "↺  Resetuj kalibraciju",
+                    contentDesc = "Resetuj kalibraciju smera",
+                    onClick = onResetHeadingCalibration,
+                    enabled = state.isDirectionCalibrated,
+                    onTouchExplore = { onTouchExploreControl("Resetuj kalibraciju") },
+                )
+            }
+
+            // ── 6. TTS STATUS ───────────────────────────────────────────────────
+            val ttsDesc = buildString {
+                append("TTS status: ${state.ttsStatusText}. ")
+                state.lastSpokenText?.let { append("Poslednja poruka: $it.") }
+            }
+
+            AccessibleCard(contentDesc = ttsDesc) {
+                CardLabel("Glasovni status (TTS)")
+                CardRow(
+                    label = "Status",
+                    value = state.ttsStatusText,
+                    valueColor = if (state.lastTtsError != null) ErrorRed else ScanningGreen,
+                )
+                state.lastSpokenText?.let {
+                    CardRow("Poslednja poruka", it)
+                }
+                state.lastTtsError?.let { err ->
+                    Text(
+                        text = "⚠ $err",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = ErrorRed,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            // ── 7. SKORAŠNJI DOGAĐAJI ───────────────────────────────────────────
+            if (state.recentEvents.isNotEmpty()) {
+                AccessibleCard(contentDesc = "Skorašnji eventi, ${state.recentEvents.size} događaja") {
+                    CardLabel("Skorašnji događaji")
+                    state.recentEvents.take(5).forEach { event ->
+                        Text(
+                            text = buildString {
+                                append("${event.beaconId}")
+                                append("  •  RSSI: ${event.rssi}")
+                                append("  •  ${if (event.wasAnnounced) "Najavljeno ✓" else "Preskočeno"}")
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (event.wasAnnounced) ScanningGreen else PureWhite.copy(alpha = 0.7f),
+                        )
+                    }
+                }
             }
         }
     }
 }
 
-private fun formatDegrees(angle: Int): String = "${angle}\u00B0"
+// ── Reusable komponente ────────────────────────────────────────────────────────
 
-private fun formatRelativeAngle(angle: Int): String {
-    return if (angle > 0) {
-        "+${angle}\u00B0"
-    } else {
-        "${angle}\u00B0"
+@Composable
+private fun AccessibleCard(
+    contentDesc: String,
+    content: @Composable Column.() -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = contentDesc },
+        shape = CardShape,
+        border = CardBorder,
+        colors = CardDefaults.cardColors(containerColor = CardBackground),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            content = { content() },
+        )
+    }
+}
+
+@Composable
+private fun CardLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleMedium,
+        color = BrightYellow,
+        fontWeight = FontWeight.Bold,
+    )
+}
+
+@Composable
+private fun CardRow(
+    label: String,
+    value: String,
+    valueColor: androidx.compose.ui.graphics.Color = PureWhite,
+) {
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = PureWhite.copy(alpha = 0.65f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            color = valueColor,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+private fun ReceiverPrimaryButton(
+    text: String,
+    contentDesc: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    isActive: Boolean = false,
+    onTouchExplore: () -> Unit,
+    minHeight: Dp = 64.dp,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .sizeIn(minHeight = minHeight)
+            .touchExploreRaw(onTouchExplore)
+            .semantics { contentDescription = contentDesc },
+        shape = ButtonShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isActive) ScanningGreen else BrightYellow,
+            contentColor = DeepBlack,
+            disabledContainerColor = CardBackground,
+            disabledContentColor = PureWhite.copy(alpha = 0.4f),
+        ),
+        border = BorderStroke(2.dp, if (enabled) (if (isActive) ScanningGreen else BrightYellow) else PureWhite.copy(alpha = 0.2f)),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun ReceiverOutlinedButton(
+    text: String,
+    contentDesc: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    onTouchExplore: () -> Unit,
+    minHeight: Dp = 64.dp,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .sizeIn(minHeight = minHeight)
+            .touchExploreRaw(onTouchExplore)
+            .semantics { contentDescription = contentDesc },
+        shape = ButtonShape,
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = LightYellow,
+            disabledContentColor = PureWhite.copy(alpha = 0.35f),
+        ),
+        border = BorderStroke(2.dp, if (enabled) LightYellow else PureWhite.copy(alpha = 0.2f)),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+// ── Utility ────────────────────────────────────────────────────────────────────
+
+private fun formatDegrees(angle: Int): String = "$angle°"
+
+private fun formatRelativeAngle(angle: Int): String =
+    if (angle > 0) "+$angle°" else "$angle°"
+
+@OptIn(ExperimentalComposeUiApi::class)
+private fun Modifier.touchExploreRaw(onExplore: () -> Unit): Modifier = composed {
+    var announced by remember { mutableStateOf(false) }
+    pointerInteropFilter { event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                if (!announced) {
+                    announced = true
+                    onExplore()
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> announced = false
+        }
+        false
     }
 }
 
@@ -411,7 +454,6 @@ private fun Modifier.touchExplore(
                     onTouchExploreControl(label)
                 }
             }
-
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> announced = false
         }
         false
