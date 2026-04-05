@@ -1,5 +1,6 @@
 package rs.fon.hakaton.audionav.ui.screens.receiver
 
+import android.view.MotionEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,7 +19,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -36,11 +44,13 @@ fun ReceiverScreen(
     onStopClick: () -> Unit,
     onCalibrateHeading: () -> Unit,
     onResetHeadingCalibration: () -> Unit,
+    onRepeatLastClick: () -> Unit,
+    onTouchExploreControl: (String) -> Unit,
 ) {
     val voiceAnnouncementStatus = when {
-        state.lastEligibleForAnnouncement != true && state.lastTtsError == null && state.lastSpokenAt == null -> {
-            "Nije pokusana"
-        }
+        state.lastEligibleForAnnouncement != true &&
+            state.lastTtsError == null &&
+            state.lastSpokenAt == null -> "Nije pokusana"
 
         state.lastTtsError != null -> "Nije zakazana"
         state.lastEligibleForAnnouncement == true -> "Uspesno zakazana"
@@ -52,7 +62,10 @@ fun ReceiverScreen(
             TopAppBar(
                 title = { Text("Receiver mod") },
                 navigationIcon = {
-                    TextButton(onClick = onNavigateBack) {
+                    TextButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.touchExplore("Nazad", onTouchExploreControl),
+                    ) {
                         Text("Nazad")
                     }
                 },
@@ -114,22 +127,24 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text("Raw heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
-                    Text("Lokalni heading: ${state.localHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Raw heading: ${state.currentHeadingDegrees?.let(::formatDegrees) ?: "-"}")
+                    Text("Lokalni heading: ${state.localHeadingDegrees?.let(::formatDegrees) ?: "-"}")
                     Text("Pouzdanost smera: ${state.headingConfidenceText}")
                     Text("Status: ${state.directionCalibrationText}")
                     Button(
                         onClick = onCalibrateHeading,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .touchExplore("Postavi trenutni smer kao 0", onTouchExploreControl)
                             .semantics { contentDescription = "Postavi trenutni smer kao nula stepeni" },
                     ) {
-                        Text("Postavi trenutni smer kao 0°")
+                        Text("Postavi trenutni smer kao 0\u00B0")
                     }
                     OutlinedButton(
                         onClick = onResetHeadingCalibration,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .touchExplore("Resetuj kalibraciju", onTouchExploreControl)
                             .semantics { contentDescription = "Resetuj kalibraciju smera" },
                         enabled = state.isDirectionCalibrated,
                     ) {
@@ -171,11 +186,13 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text("Raw heading: ${state.currentHeadingDegrees?.let { "$it°" } ?: "-"}")
-                    Text("Lokalni heading: ${state.localHeadingDegrees?.let { "$it°" } ?: "-"}")
+                    Text("Raw heading: ${state.currentHeadingDegrees?.let(::formatDegrees) ?: "-"}")
+                    Text("Lokalni heading: ${state.localHeadingDegrees?.let(::formatDegrees) ?: "-"}")
                     Text("Pouzdanost smera: ${state.headingConfidenceText}")
                     Text("Smer objekta: ${state.lastDirectionLabel.toDisplayText()}")
-                    Text("Relativni ugao: ${state.lastRelativeAngleDegrees?.let { formatRelativeAngle(it) } ?: "-"}")
+                    Text(
+                        "Relativni ugao: ${state.lastRelativeAngleDegrees?.let(::formatRelativeAngle) ?: "-"}",
+                    )
                     state.directionFallbackReason?.let { fallbackReason ->
                         Text(fallbackReason, style = MaterialTheme.typography.bodyMedium)
                     }
@@ -335,6 +352,7 @@ fun ReceiverScreen(
                 onClick = onStartClick,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .touchExplore("Pokreni skeniranje", onTouchExploreControl)
                     .semantics { contentDescription = "Pokreni receiver skeniranje" }
                     .sizeIn(minHeight = 56.dp),
                 enabled = state.isReady && !state.isScanning && state.scannerSupported,
@@ -343,9 +361,22 @@ fun ReceiverScreen(
             }
 
             OutlinedButton(
+                onClick = onRepeatLastClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .touchExplore("Procitaj opet poslednju poruku", onTouchExploreControl)
+                    .semantics { contentDescription = "Procitaj opet poslednju glasovnu poruku" }
+                    .sizeIn(minHeight = 56.dp),
+                enabled = state.lastSpokenText != null,
+            ) {
+                Text("Procitaj opet poslednju poruku")
+            }
+
+            OutlinedButton(
                 onClick = onStopClick,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .touchExplore("Zaustavi", onTouchExploreControl)
                     .semantics { contentDescription = "Zaustavi receiver skeniranje" }
                     .sizeIn(minHeight = 56.dp),
                 enabled = state.isScanning || state.retryScheduled,
@@ -356,10 +387,33 @@ fun ReceiverScreen(
     }
 }
 
+private fun formatDegrees(angle: Int): String = "${angle}\u00B0"
+
 private fun formatRelativeAngle(angle: Int): String {
     return if (angle > 0) {
-        "+${angle}°"
+        "+${angle}\u00B0"
     } else {
-        "$angle°"
+        "${angle}\u00B0"
+    }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+private fun Modifier.touchExplore(
+    label: String,
+    onTouchExploreControl: (String) -> Unit,
+): Modifier = composed {
+    var announced by remember(label) { mutableStateOf(false) }
+    pointerInteropFilter { event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                if (!announced) {
+                    announced = true
+                    onTouchExploreControl(label)
+                }
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> announced = false
+        }
+        false
     }
 }

@@ -356,6 +356,76 @@ class AppViewModelTest {
     }
 
     @Test
+    fun `repeat last message does nothing when there is no spoken text`() = runTest {
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(ttsAnnouncer = ttsAnnouncer)
+        advanceUntilIdle()
+
+        val stateBefore = viewModel.uiState.value.receiverState
+
+        viewModel.onRepeatLastMessage()
+        advanceUntilIdle()
+
+        assertEquals(0, ttsAnnouncer.announceCalls)
+        assertEquals(stateBefore, viewModel.uiState.value.receiverState)
+    }
+
+    @Test
+    fun `repeat last message replays only the last spoken text`() = runTest {
+        val scanner = FakeBeaconScannerController()
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(scanner = scanner, ttsAnnouncer = ttsAnnouncer)
+        viewModel.onSystemStatusChanged(
+            permissionUiState = PermissionUiState(status = PermissionStatus.GRANTED),
+            bluetoothStatus = BluetoothStatus.READY,
+        )
+        calibrateReceiverDirection(viewModel)
+        viewModel.onStartReceiverClick()
+        advanceUntilIdle()
+
+        repeat(3) { index ->
+            scanner.emit(
+                beaconDetected(
+                    pointType = PointType.STAIRS,
+                    messageCode = 2,
+                    rssi = -60,
+                    detectedAt = 700L + index,
+                ),
+            )
+            advanceUntilIdle()
+        }
+
+        val stateBeforeRepeat = viewModel.uiState.value.receiverState
+        assertEquals("Stepenice su ispred vas.", stateBeforeRepeat.lastSpokenText)
+        assertEquals(1, ttsAnnouncer.announceCalls)
+
+        viewModel.onRepeatLastMessage()
+        advanceUntilIdle()
+
+        assertEquals(2, ttsAnnouncer.announceCalls)
+        assertEquals("Stepenice su ispred vas.", ttsAnnouncer.announcedTexts.last())
+        assertTrue(ttsAnnouncer.announcedUtteranceIds.last().startsWith("ui-repeat-"))
+        assertEquals(stateBeforeRepeat, viewModel.uiState.value.receiverState)
+    }
+
+    @Test
+    fun `touch explore announces control label without touching receiver pipeline`() = runTest {
+        val ttsAnnouncer = FakeTtsAnnouncer()
+        val viewModel = createViewModel(ttsAnnouncer = ttsAnnouncer)
+        advanceUntilIdle()
+
+        val stateBefore = viewModel.uiState.value.receiverState
+
+        viewModel.onTouchExploreControl("Pokreni skeniranje")
+        advanceUntilIdle()
+
+        assertEquals(1, ttsAnnouncer.announceCalls)
+        assertEquals("Pokreni skeniranje", ttsAnnouncer.announcedTexts.last())
+        assertTrue(ttsAnnouncer.announcedUtteranceIds.last().startsWith("ui-touch-"))
+        assertEquals(stateBefore, viewModel.uiState.value.receiverState)
+    }
+
+    @Test
     fun `receiver valid payload with unknown message code shows fallback text after stabilization`() = runTest {
         val scanner = FakeBeaconScannerController()
         val ttsAnnouncer = FakeTtsAnnouncer()

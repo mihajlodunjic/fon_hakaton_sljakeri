@@ -105,6 +105,8 @@ fun PametniAudioNavApp(
                 onStopClick = { viewModel.onStopClick(AppMode.RECEIVER) },
                 onCalibrateHeading = viewModel::onCalibrateReceiverHeading,
                 onResetHeadingCalibration = viewModel::onResetReceiverHeadingCalibration,
+                onRepeatLastClick = viewModel::onRepeatLastMessage,
+                onTouchExploreControl = viewModel::onTouchExploreControl,
             )
         }
     }

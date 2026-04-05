@@ -81,6 +81,8 @@ class AppViewModel(
     private var latestHeadingEstimate: HeadingEstimate? = null
     private var receiverScreenVisible: Boolean = false
     private var receiverHeadingOffsetDegrees: Int? = null
+    private var activeUiUtteranceId: String? = null
+    private var interruptedAnnouncementUtteranceId: String? = null
 
     init {
         ttsAnnouncer.initialize(
@@ -331,6 +333,24 @@ class AppViewModel(
                 ),
             )
         }
+    }
+
+    fun onTouchExploreControl(label: String) {
+        if (label.isBlank()) {
+            return
+        }
+        announceUiText(
+            text = label,
+            utterancePrefix = "ui-touch",
+        )
+    }
+
+    fun onRepeatLastMessage() {
+        val lastSpokenText = _uiState.value.receiverState.lastSpokenText ?: return
+        announceUiText(
+            text = lastSpokenText,
+            utterancePrefix = "ui-repeat",
+        )
     }
 
     fun onStartBeaconClick() {
@@ -1217,6 +1237,34 @@ class AppViewModel(
 
     private fun handleTtsPlaybackEvent(event: TtsPlaybackEvent) {
         viewModelScope.launch {
+            val uiUtteranceId = activeUiUtteranceId
+            if (uiUtteranceId != null && event.matchesUtterance(uiUtteranceId)) {
+                handleUiTtsPlaybackEvent(event)
+                return@launch
+            }
+
+            val interruptedUtteranceId = interruptedAnnouncementUtteranceId
+            if (
+                interruptedUtteranceId != null &&
+                event is TtsPlaybackEvent.Stopped &&
+                event.utteranceId == interruptedUtteranceId
+            ) {
+                AppLogger.d(
+                    LogTag.TTS,
+                    "Navigation TTS interrupted by UI explore for utteranceId=${event.utteranceId}",
+                )
+                interruptedAnnouncementUtteranceId = null
+                val finishedAnnouncement = announcementArbiter.onPlaybackFinished(event.utteranceId)
+                if (finishedAnnouncement != null) {
+                    _uiState.update { state ->
+                        state.copy(
+                            receiverState = recomputeReceiverState(state, state.receiverState),
+                        )
+                    }
+                }
+                return@launch
+            }
+
             when (event) {
                 is TtsPlaybackEvent.Started -> {
                     AppLogger.d(LogTag.TTS, "TTS playback started for utteranceId=${event.utteranceId}")
@@ -1482,6 +1530,8 @@ class AppViewModel(
         cancelAnnouncementGap()
         beaconScannerController.stopScanning()
         ttsAnnouncer.stop()
+        activeUiUtteranceId = null
+        interruptedAnnouncementUtteranceId = null
         announcementArbiter.clear()
         behindPassTracker.reset()
         rssiStabilizer.reset()
@@ -1715,6 +1765,82 @@ class AppViewModel(
 
         viewModelScope.launch {
             beaconConfigStorage.save(config)
+        }
+    }
+
+    private fun announceUiText(
+        text: String,
+        utterancePrefix: String,
+    ) {
+        val utteranceId = "$utterancePrefix-${UUID.randomUUID()}"
+        val interruptedUtteranceId = announcementArbiter.currentActive()?.utteranceId
+        when (
+            val speakResult = ttsAnnouncer.announce(
+                text = text,
+                utteranceId = utteranceId,
+            )
+        ) {
+            TtsSpeakResult.Queued -> {
+                activeUiUtteranceId = utteranceId
+                interruptedAnnouncementUtteranceId = interruptedUtteranceId
+                AppLogger.d(
+                    LogTag.TTS,
+                    "UI TTS queued for utteranceId=$utteranceId",
+                )
+            }
+
+            is TtsSpeakResult.SkippedNotReady -> {
+                activeUiUtteranceId = null
+                interruptedAnnouncementUtteranceId = null
+                AppLogger.w(
+                    LogTag.TTS,
+                    "UI TTS skipped for utteranceId=$utteranceId: ${speakResult.message}",
+                )
+            }
+
+            is TtsSpeakResult.Failed -> {
+                activeUiUtteranceId = null
+                interruptedAnnouncementUtteranceId = null
+                AppLogger.e(
+                    LogTag.TTS,
+                    "UI TTS failed for utteranceId=$utteranceId: ${speakResult.message}",
+                )
+            }
+        }
+    }
+
+    private fun handleUiTtsPlaybackEvent(event: TtsPlaybackEvent) {
+        when (event) {
+            is TtsPlaybackEvent.Started -> {
+                AppLogger.d(LogTag.TTS, "UI TTS started for utteranceId=${event.utteranceId}")
+            }
+
+            is TtsPlaybackEvent.Done -> {
+                AppLogger.d(LogTag.TTS, "UI TTS done for utteranceId=${event.utteranceId}")
+                activeUiUtteranceId = null
+            }
+
+            is TtsPlaybackEvent.Error -> {
+                AppLogger.w(
+                    LogTag.TTS,
+                    "UI TTS error for utteranceId=${event.utteranceId}: ${event.message}",
+                )
+                activeUiUtteranceId = null
+            }
+
+            is TtsPlaybackEvent.Stopped -> {
+                AppLogger.d(LogTag.TTS, "UI TTS stopped for utteranceId=${event.utteranceId}")
+                activeUiUtteranceId = null
+            }
+        }
+    }
+
+    private fun TtsPlaybackEvent.matchesUtterance(utteranceId: String): Boolean {
+        return when (this) {
+            is TtsPlaybackEvent.Started -> this.utteranceId == utteranceId
+            is TtsPlaybackEvent.Done -> this.utteranceId == utteranceId
+            is TtsPlaybackEvent.Error -> this.utteranceId == utteranceId
+            is TtsPlaybackEvent.Stopped -> this.utteranceId == utteranceId
         }
     }
 
